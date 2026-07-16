@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL,
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
 });
@@ -142,16 +144,16 @@ export const reportsApi = {
     api.get(`/reports/session/${sessionId}/summary`).then(r => r.data),
 
   exportAttendanceCsv: (sessionId: number) =>
-    `/api/reports/session/${sessionId}/attendance/csv`,
+    `${import.meta.env.VITE_API_URL || ''}/api/reports/session/${sessionId}/attendance/csv`,
 
   exportLeaderboardCsv: (sessionId: number) =>
-    `/api/reports/session/${sessionId}/leaderboard/csv`,
+    `${import.meta.env.VITE_API_URL || ''}/api/reports/session/${sessionId}/leaderboard/csv`,
 
   exportPollsCsv: (sessionId: number) =>
-    `/api/reports/session/${sessionId}/polls/csv`,
+    `${import.meta.env.VITE_API_URL || ''}/api/reports/session/${sessionId}/polls/csv`,
 
   exportQuizCsv: (sessionId: number) =>
-    `/api/reports/session/${sessionId}/quiz/csv`,
+    `${import.meta.env.VITE_API_URL || ''}/api/reports/session/${sessionId}/quiz/csv`,
 };
 
 // ─── Activity ──────────────────────────────────────────────────────────────────

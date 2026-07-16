@@ -23,7 +23,8 @@ class WSService {
   private _connect() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const url = `${protocol}//${host}/ws/${this.sessionId}`;
+    const wsBase = import.meta.env.VITE_WS_URL || `${protocol}//${host}`;
+    const url = `${wsBase}/ws/${this.sessionId}`;
 
     this.ws = new WebSocket(url);
 
