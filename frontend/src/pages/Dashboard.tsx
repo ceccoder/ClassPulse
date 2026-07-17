@@ -79,7 +79,39 @@ export default function Dashboard() {
       toast.success('Session ended');
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
+    onError: (error: any) => {
+      console.error('[EndSession] Error:', error);
+      if (error?.response?.status === 404) {
+        setActiveSession(null);
+        toast.success('Session state cleared (not found on server)');
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      } else {
+        toast.error('Failed to end session. Check console for details.');
+      }
+    },
   });
+
+  // Verify active session status on load and sync it with server database
+  const { data: serverActiveSession, isSuccess } = useQuery({
+    queryKey: ['serverActiveSession'],
+    queryFn: () => sessionsApi.getActive(),
+    refetchInterval: 20000, // check every 20 seconds
+  });
+
+  useEffect(() => {
+    if (isSuccess) {
+      // Sync local Zustand state with what is actually on the server database
+      if (serverActiveSession) {
+        if (!activeSession || activeSession.id !== serverActiveSession.id) {
+          setActiveSession(serverActiveSession);
+        }
+      } else {
+        if (activeSession) {
+          setActiveSession(null);
+        }
+      }
+    }
+  }, [serverActiveSession, isSuccess, activeSession, setActiveSession]);
 
   const statCards = [
     {
