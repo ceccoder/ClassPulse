@@ -28,6 +28,7 @@ class SessionOut(BaseModel):
     status: str
     created_at: datetime
     ended_at: Optional[datetime]
+    is_polling: bool = False
 
     model_config = {"from_attributes": True}
 

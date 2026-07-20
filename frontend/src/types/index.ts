@@ -11,6 +11,7 @@ export interface ClassSession {
   status: SessionStatus;
   created_at: string;
   ended_at: string | null;
+  is_polling?: boolean;
 }
 
 // ─── Student Types ─────────────────────────────────────────────────────────────

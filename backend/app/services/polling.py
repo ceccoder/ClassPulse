@@ -3,6 +3,7 @@ Chat polling service - background task that polls YouTube Live chat
 and feeds messages to the ChatProcessor.
 """
 import asyncio
+from datetime import datetime, timezone
 from typing import Dict, Optional
 from app.connectors import get_connector
 from app.services.chat_processor import ChatProcessor
@@ -50,7 +51,7 @@ class ChatPollingService:
     async def _poll_loop(self, session_id: int, connector, live_chat_id: str):
         """Main polling loop."""
         page_token = None
-        first_poll = True
+        start_time = datetime.now(timezone.utc)
 
         while True:
             try:
@@ -59,15 +60,19 @@ class ChatPollingService:
                 )
                 page_token = next_token
 
-                # Skip first batch (historical messages)
-                if not first_poll and messages:
+                if messages:
                     for msg in messages:
-                        try:
-                            await self.processor.process_message(msg, session_id)
-                        except Exception as e:
-                            print(f"[Polling] Error processing message: {e}")
+                        # Make sure msg.timestamp has timezone info (or treat as UTC)
+                        ts = msg.timestamp
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        
+                        if ts >= start_time:
+                            try:
+                                await self.processor.process_message(msg, session_id)
+                            except Exception as e:
+                                print(f"[Polling] Error processing message: {e}")
 
-                first_poll = False
                 await asyncio.sleep(interval_ms / 1000)
 
             except asyncio.CancelledError:

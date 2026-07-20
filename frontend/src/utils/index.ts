@@ -3,16 +3,26 @@
  */
 import { formatDistanceToNow, format } from 'date-fns';
 
+function parseDate(date: string | Date): Date {
+  if (date instanceof Date) return date;
+  if (typeof date === 'string') {
+    if (date.includes('T') && !date.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(date)) {
+      return new Date(`${date}Z`);
+    }
+  }
+  return new Date(date);
+}
+
 export function formatRelativeTime(date: string | Date): string {
-  return formatDistanceToNow(new Date(date), { addSuffix: true });
+  return formatDistanceToNow(parseDate(date), { addSuffix: true });
 }
 
 export function formatDateTime(date: string | Date): string {
-  return format(new Date(date), 'MMM d, yyyy HH:mm');
+  return format(parseDate(date), 'MMM d, yyyy HH:mm');
 }
 
 export function formatTime(date: string | Date): string {
-  return format(new Date(date), 'HH:mm:ss');
+  return format(parseDate(date), 'HH:mm:ss');
 }
 
 export function formatDuration(ms: number): string {

@@ -27,6 +27,7 @@ async def create_session(data: SessionCreate, db: AsyncSession = Depends(get_db)
     db.add(session)
     await db.flush()
     await db.refresh(session)
+    session.is_polling = polling_service.is_polling(session.id)
     return session
 
 
@@ -39,7 +40,10 @@ async def list_sessions(
     if status:
         q = q.where(ClassSession.status == status)
     result = await db.execute(q)
-    return result.scalars().all()
+    sessions = result.scalars().all()
+    for s in sessions:
+        s.is_polling = polling_service.is_polling(s.id)
+    return sessions
 
 
 @router.get("/active", response_model=Optional[SessionOut])
@@ -50,7 +54,10 @@ async def get_active_session(db: AsyncSession = Depends(get_db)):
         .order_by(desc(ClassSession.created_at))
         .limit(1)
     )
-    return result.scalar_one_or_none()
+    session = result.scalar_one_or_none()
+    if session:
+        session.is_polling = polling_service.is_polling(session.id)
+    return session
 
 
 @router.get("/{session_id}", response_model=SessionOut)
@@ -59,6 +66,7 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(404, "Session not found")
+    session.is_polling = polling_service.is_polling(session.id)
     return session
 
 
@@ -87,6 +95,7 @@ async def update_session(
 
     await db.flush()
     await db.refresh(session)
+    session.is_polling = polling_service.is_polling(session.id)
     return session
 
 

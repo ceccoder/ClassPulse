@@ -60,13 +60,25 @@ export default function Dashboard() {
       platform: 'youtube',
       stream_id: newStreamId || undefined
     }),
-    onSuccess: (session: ClassSession) => {
+    onSuccess: async (session: ClassSession) => {
       setActiveSession(session);
       setShowNewSession(false);
       setNewTitle('');
       setNewStreamId('');
       toast.success('Session created!');
+      
+      if (session.stream_id) {
+        try {
+          await sessionsApi.startPolling(session.id);
+          toast.success('Started polling YouTube Live chat!');
+          setActiveSession({ ...session, is_polling: true });
+        } catch (err: any) {
+          const detail = err?.response?.data?.detail || 'Failed to start polling YouTube Live chat. Ensure API key is configured.';
+          toast.error(detail);
+        }
+      }
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      queryClient.invalidateQueries({ queryKey: ['serverActiveSession'] });
     },
     onError: () => toast.error('Failed to create session'),
   });
@@ -89,6 +101,37 @@ export default function Dashboard() {
         toast.error('Failed to end session. Check console for details.');
       }
     },
+  });
+
+  // Start polling
+  const startPolling = useMutation({
+    mutationFn: () => sessionsApi.startPolling(activeSession!.id),
+    onSuccess: () => {
+      toast.success('YouTube polling started!');
+      if (activeSession) {
+        setActiveSession({ ...activeSession, is_polling: true });
+      }
+      queryClient.invalidateQueries({ queryKey: ['serverActiveSession'] });
+    },
+    onError: (err: any) => {
+      const detail = err?.response?.data?.detail || 'Failed to start polling. Check YouTube API key and stream ID.';
+      toast.error(detail);
+    }
+  });
+
+  // Stop polling
+  const stopPolling = useMutation({
+    mutationFn: () => sessionsApi.stopPolling(activeSession!.id),
+    onSuccess: () => {
+      toast.success('YouTube polling stopped!');
+      if (activeSession) {
+        setActiveSession({ ...activeSession, is_polling: false });
+      }
+      queryClient.invalidateQueries({ queryKey: ['serverActiveSession'] });
+    },
+    onError: () => {
+      toast.error('Failed to stop polling.');
+    }
   });
 
   // Verify active session status on load and sync it with server database
@@ -145,6 +188,29 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex gap-3">
+          {activeSession && (
+            <>
+              {activeSession.is_polling ? (
+                <button
+                  onClick={() => stopPolling.mutate()}
+                  className="btn-secondary text-accent-emerald border-accent-emerald/30 hover:bg-accent-emerald/10 flex items-center gap-2"
+                  disabled={stopPolling.isPending}
+                >
+                  <Wifi size={16} className="animate-pulse" />
+                  Polling Live
+                </button>
+              ) : (
+                <button
+                  onClick={() => startPolling.mutate()}
+                  className="btn-secondary text-surface-400 hover:text-white flex items-center gap-2"
+                  disabled={startPolling.isPending}
+                >
+                  <Wifi size={16} className="opacity-50" />
+                  Start Polling
+                </button>
+              )}
+            </>
+          )}
           {activeSession ? (
             <button
               onClick={() => endSession.mutate()}
@@ -359,7 +425,18 @@ export default function Dashboard() {
             </div>
             <div>
               <div className="text-surface-500 mb-1">Status</div>
-              <span className="badge-active">Active</span>
+              <div className="flex items-center gap-2">
+                <span className="badge-active">Active</span>
+                {activeSession.is_polling ? (
+                  <span className="text-accent-emerald text-xs flex items-center gap-1 bg-accent-emerald/10 px-2 py-0.5 rounded border border-accent-emerald/20">
+                    <span className="live-dot" /> Polling Live
+                  </span>
+                ) : (
+                  <span className="text-surface-400 text-xs flex items-center gap-1 bg-surface-800 px-2 py-0.5 rounded border border-surface-700">
+                    Polling Idle
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
