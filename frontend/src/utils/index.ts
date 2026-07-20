@@ -96,3 +96,14 @@ export function downloadUrl(url: string, filename: string) {
   a.download = filename;
   a.click();
 }
+
+export function extractYouTubeVideoId(input: string): string {
+  if (!input) return '';
+  const trimmed = input.trim();
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|live\/)([^#\&\?]*).*/;
+  const match = trimmed.match(regExp);
+  if (match && match[2].length === 11) {
+    return match[2];
+  }
+  return trimmed;
+}

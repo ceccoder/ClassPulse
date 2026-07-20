@@ -21,9 +21,15 @@ class WSService {
   }
 
   private _connect() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsBase = import.meta.env.VITE_WS_URL || `${protocol}//${host}`;
+    let wsBase = import.meta.env.VITE_WS_URL;
+    if (!wsBase && import.meta.env.VITE_API_URL) {
+      wsBase = import.meta.env.VITE_API_URL.replace(/^http/, 'ws');
+    }
+    if (!wsBase) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      wsBase = `${protocol}//${host}`;
+    }
     const url = `${wsBase}/ws/${this.sessionId}`;
 
     this.ws = new WebSocket(url);

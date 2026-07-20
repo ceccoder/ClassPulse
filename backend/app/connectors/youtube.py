@@ -31,10 +31,26 @@ class YouTubeConnector(BaseConnector):
         if not self.api_key:
             return None
 
+        # Extract YouTube video ID if stream_id is a URL
+        import re
+        clean_id = stream_id.strip()
+        patterns = [
+            r"(?:https?://)?(?:www\.)?youtube\.com/watch\?v=([^&\s?#]+)",
+            r"(?:https?://)?(?:www\.)?youtu\.be/([^&\s?#]+)",
+            r"(?:https?://)?(?:www\.)?youtube\.com/embed/([^&\s?#]+)",
+            r"(?:https?://)?(?:www\.)?youtube\.com/v/([^&\s?#]+)",
+            r"(?:https?://)?(?:www\.)?youtube\.com/live/([^&\s?#]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, clean_id)
+            if match:
+                clean_id = match.group(1)
+                break
+
         url = f"{YOUTUBE_API_BASE}/videos"
         params = {
             "part": "liveStreamingDetails",
-            "id": stream_id,
+            "id": clean_id,
             "key": self.api_key
         }
         try:

@@ -8,7 +8,7 @@ import { toast } from 'react-hot-toast';
 import { sessionsApi, leaderboardApi, analyticsApi } from '@/services/api';
 import { useSessionStore, usePollStore } from '@/store';
 import { useWebSocket, useWSEvent } from '@/hooks/useWebSocket';
-import { formatDateTime, formatRelativeTime, POLL_COLORS, percentage } from '@/utils';
+import { formatDateTime, formatRelativeTime, POLL_COLORS, percentage, extractYouTubeVideoId } from '@/utils';
 import type { ClassSession } from '@/types';
 
 export default function Dashboard() {
@@ -58,7 +58,7 @@ export default function Dashboard() {
     mutationFn: () => sessionsApi.create({
       title: newTitle || `Class ${new Date().toLocaleDateString()}`,
       platform: 'youtube',
-      stream_id: newStreamId || undefined
+      stream_id: extractYouTubeVideoId(newStreamId) || undefined
     }),
     onSuccess: async (session: ClassSession) => {
       setActiveSession(session);
