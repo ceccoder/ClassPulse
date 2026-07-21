@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus, Play, Pause, RotateCcw, StopCircle, Trash2,
-  BarChart2, ChevronDown, ChevronUp
+  BarChart2, ChevronDown, ChevronUp, Clock
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import {
@@ -18,6 +18,13 @@ import type { Poll } from '@/types';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
+const DEFAULT_4_OPTIONS = [
+  { text: 'Option A', keyword: 'A' },
+  { text: 'Option B', keyword: 'B' },
+  { text: 'Option C', keyword: 'C' },
+  { text: 'Option D', keyword: 'D' },
+];
+
 export default function PollsPage() {
   const queryClient = useQueryClient();
   const activeSession = useSessionStore(s => s.activeSession);
@@ -28,10 +35,11 @@ export default function PollsPage() {
   // Poll form state
   const [question, setQuestion] = useState('');
   const [allowChange, setAllowChange] = useState(true);
-  const [options, setOptions] = useState([
-    { text: '', keyword: 'A' },
-    { text: '', keyword: 'B' },
-  ]);
+  const [timerSeconds, setTimerSeconds] = useState<number>(30); // Default 30s timer
+  const [options, setOptions] = useState(DEFAULT_4_OPTIONS);
+
+  // Active poll live countdown state
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   // WS live updates
   useWSEvent('poll_vote', (data) => {
@@ -53,19 +61,51 @@ export default function PollsPage() {
   const createPoll = useMutation({
     mutationFn: () => pollsApi.create({
       session_id: activeSession!.id,
-      question,
-      options: options.filter(o => o.text.trim()),
+      question: question.trim() || 'Quick Poll (A/B/C/D)',
+      options: options.map(o => ({ ...o, text: o.text.trim() || `Option ${o.keyword}` })),
       allow_vote_change: allowChange,
     }),
-    onSuccess: (poll: Poll) => {
-      toast.success('Poll created!');
+    onSuccess: async (poll: Poll) => {
+      toast.success('Poll created & launched!');
       setShowCreate(false);
       setQuestion('');
-      setOptions([{ text: '', keyword: 'A' }, { text: '', keyword: 'B' }]);
+      setOptions(DEFAULT_4_OPTIONS);
+      
+      // Auto-start poll with timer if set
+      if (timerSeconds > 0) {
+        await pollsApi.start(poll.id);
+        setTimeLeft(timerSeconds);
+      }
       queryClient.invalidateQueries({ queryKey: ['polls', activeSession?.id] });
     },
     onError: () => toast.error('Failed to create poll'),
   });
+
+  // Auto-end poll timer countdown logic
+  useEffect(() => {
+    if (!activePoll || activePoll.status !== 'active' || timeLeft === null) return;
+
+    if (timeLeft <= 0) {
+      pollsApi.end(activePoll.id).then(() => {
+        toast.success('Poll timer ended!');
+        setTimeLeft(null);
+        queryClient.invalidateQueries({ queryKey: ['polls', activeSession?.id] });
+      });
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setTimeLeft(prev => (prev !== null && prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [activePoll, timeLeft]);
+
+  const handleOpenCreateModal = () => {
+    setQuestion('');
+    setOptions(DEFAULT_4_OPTIONS);
+    setShowCreate(true);
+  };
 
   const mutate = (fn: () => Promise<Poll>, successMsg: string) =>
     useMutation({
@@ -90,7 +130,7 @@ export default function PollsPage() {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'active': return <span className="badge-active"><span className="live-dot mr-1.5"/>Live</span>;
+      case 'active': return <span className="badge-active"><span className="live-dot mr-1.5" />Live</span>;
       case 'paused': return <span className="badge-paused">Paused</span>;
       case 'ended': return <span className="badge-ended">Ended</span>;
       default: return <span className="badge-draft">Draft</span>;
@@ -117,9 +157,9 @@ export default function PollsPage() {
             {polls.length} polls · {activePoll ? '1 live' : 'none live'}
           </p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
+        <button onClick={handleOpenCreateModal} className="btn-primary flex items-center gap-2">
           <Plus size={16} />
-          New Poll
+          New Quick Poll
         </button>
       </div>
 
@@ -127,21 +167,44 @@ export default function PollsPage() {
       {showCreate && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="glass-card p-6 w-full max-w-lg space-y-4 animate-slide-up max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-semibold text-white">Create Poll</h2>
+            <h2 className="text-lg font-semibold text-white">Create Quick Poll</h2>
 
             <div>
-              <label className="text-sm text-surface-400 mb-1 block">Question</label>
+              <label className="text-sm text-surface-400 mb-1 block">Question (Optional)</label>
               <input
                 className="input"
-                placeholder="Ask your students..."
+                placeholder="Ask your students (or leave blank for standard A/B/C/D)..."
                 value={question}
                 onChange={e => setQuestion(e.target.value)}
               />
             </div>
 
+            {/* Timer Presets */}
+            <div>
+              <label className="text-sm text-surface-400 mb-2 flex items-center gap-1.5 block">
+                <Clock size={14} className="text-brand-400" /> Poll Timer (Auto-End)
+              </label>
+              <div className="grid grid-cols-4 gap-2">
+                {[15, 30, 60, 0].map((sec) => (
+                  <button
+                    key={sec}
+                    type="button"
+                    onClick={() => setTimerSeconds(sec)}
+                    className={`py-2 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                      timerSeconds === sec
+                        ? 'bg-brand-500/20 border-brand-500 text-brand-300'
+                        : 'bg-surface-800/40 border-surface-700/50 text-surface-400 hover:text-white'
+                    }`}
+                  >
+                    {sec === 0 ? 'No Timer' : `${sec}s Timer`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm text-surface-400">Options</label>
+                <label className="text-sm text-surface-400">Options (Auto A, B, C, D)</label>
                 <button onClick={addOption} className="text-xs text-brand-400 hover:text-brand-300">
                   + Add option
                 </button>
@@ -185,13 +248,13 @@ export default function PollsPage() {
               <span className="text-sm text-surface-300">Allow vote changes</span>
             </label>
 
-            <div className="flex gap-3">
+            <div className="flex gap-3 pt-2">
               <button
                 onClick={() => createPoll.mutate()}
-                className="btn-primary flex-1"
-                disabled={!question.trim() || options.filter(o => o.text.trim()).length < 2 || createPoll.isPending}
+                className="btn-primary flex-1 py-2.5 font-semibold text-sm"
+                disabled={createPoll.isPending}
               >
-                Create Poll
+                {createPoll.isPending ? 'Launching...' : `Create & Launch (${timerSeconds ? timerSeconds + 's' : 'Manual'})`}
               </button>
               <button onClick={() => setShowCreate(false)} className="btn-secondary">
                 Cancel
@@ -214,6 +277,7 @@ export default function PollsPage() {
             <PollCard
               key={poll.id}
               poll={poll}
+              timeLeft={poll.status === 'active' ? timeLeft : null}
               expanded={expandedPoll === poll.id}
               onToggle={() => setExpandedPoll(expandedPoll === poll.id ? null : poll.id)}
               onUpdate={() => queryClient.invalidateQueries({ queryKey: ['polls', activeSession?.id] })}
@@ -225,13 +289,22 @@ export default function PollsPage() {
   );
 }
 
-function PollCard({ poll, expanded, onToggle, onUpdate }: {
+function PollCard({ poll, timeLeft, expanded, onToggle, onUpdate }: {
   poll: Poll;
+  timeLeft: number | null;
   expanded: boolean;
   onToggle: () => void;
   onUpdate: () => void;
 }) {
   const queryClient = useQueryClient();
+
+  // Load voter details when expanded
+  const { data: voters = [] } = useQuery({
+    queryKey: ['poll-voters', poll.id],
+    queryFn: () => pollsApi.getVoters(poll.id),
+    enabled: expanded,
+    refetchInterval: expanded ? 3000 : false,
+  });
 
   const action = (fn: () => Promise<Poll>, msg: string) => async () => {
     try {
@@ -280,7 +353,7 @@ function PollCard({ poll, expanded, onToggle, onUpdate }: {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'active': return <span className="badge-active"><span className="live-dot mr-1.5"/>Live</span>;
+      case 'active': return <span className="badge-active"><span className="live-dot mr-1.5" />Live</span>;
       case 'paused': return <span className="badge-paused">Paused</span>;
       case 'ended': return <span className="badge-ended">Ended</span>;
       default: return <span className="badge-draft">Draft</span>;
@@ -294,6 +367,21 @@ function PollCard({ poll, expanded, onToggle, onUpdate }: {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             {getStatusBadge(poll.status)}
+            {poll.status === 'active' && timeLeft !== null && (
+              <span
+                key={timeLeft}
+                className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold border flex items-center gap-1.5 transition-all animate-timer-pop ${
+                  timeLeft <= 5
+                    ? 'bg-rose-500/30 text-rose-300 border-rose-500/50 animate-warning-pulse shadow-lg shadow-rose-900/40'
+                    : timeLeft <= 10
+                    ? 'bg-amber-500/30 text-amber-300 border-amber-500/50 shadow-md shadow-amber-900/30'
+                    : 'bg-brand-500/20 text-brand-300 border-brand-500/40'
+                }`}
+              >
+                <Clock size={12} className={timeLeft <= 5 ? 'text-rose-400 animate-spin' : 'text-brand-400'} />
+                <span>{timeLeft}s</span>
+              </span>
+            )}
             <span className="text-xs text-surface-500">{poll.total_votes} votes</span>
           </div>
           <p className="text-white font-medium truncate">{poll.question}</p>
@@ -374,13 +462,15 @@ function PollCard({ poll, expanded, onToggle, onUpdate }: {
             <Bar data={barData} options={chartOptions as never} />
           </div>
 
-          {/* Options with bars */}
-          <div className="space-y-2">
+          {/* Options with bars and voter details */}
+          <div className="space-y-3">
             {poll.options.map((opt, i) => {
               const pct = percentage(opt.vote_count, poll.total_votes);
+              const optionVoters = voters.filter(v => v.option_id === opt.id);
+
               return (
-                <div key={opt.id}>
-                  <div className="flex items-center justify-between mb-1">
+                <div key={opt.id} className="bg-surface-900/60 p-2.5 rounded-lg border border-surface-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span
                         className="w-6 h-6 rounded text-xs font-bold flex items-center justify-center text-white"
@@ -388,18 +478,38 @@ function PollCard({ poll, expanded, onToggle, onUpdate }: {
                       >
                         {opt.keyword}
                       </span>
-                      <span className="text-sm text-surface-200">{opt.text}</span>
+                      <span className="text-sm font-medium text-surface-200">{opt.text}</span>
                     </div>
-                    <span className="text-sm font-semibold text-white tabular-nums">
-                      {opt.vote_count} ({pct}%)
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-semibold text-white tabular-nums">
+                        {opt.vote_count} ({pct}%)
+                      </span>
+                    </div>
                   </div>
-                  <div className="h-1.5 bg-surface-700/60 rounded-full">
+
+                  {/* Progress Bar */}
+                  <div className="h-2 bg-surface-800/90 rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full transition-all duration-700"
                       style={{ width: `${pct}%`, backgroundColor: POLL_COLORS[i % POLL_COLORS.length] }}
                     />
                   </div>
+
+                  {/* Voter Badges List */}
+                  {optionVoters.length > 0 && (
+                    <div className="pt-1.5 border-t border-surface-800/50 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-surface-400 font-medium mr-1">Voters:</span>
+                      {optionVoters.map((v) => (
+                        <span
+                          key={v.vote_id}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-800/80 border border-surface-700/60 text-[11px] font-semibold text-brand-300 shadow-sm"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-brand-400" />
+                          {v.student_name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}

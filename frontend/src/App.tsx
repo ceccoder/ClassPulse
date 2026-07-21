@@ -9,14 +9,16 @@ import ActivityPage from '@/pages/ActivityPage';
 import ReportsPage from '@/pages/ReportsPage';
 import HistoryPage from '@/pages/HistoryPage';
 import PresentationPage from '@/pages/PresentationPage';
+import OverlayPage from '@/pages/OverlayPage';
 import SettingsPage from '@/pages/SettingsPage';
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Presentation mode — full screen, no layout */}
+        {/* Presentation & Overlay widgets — stand-alone, no layout */}
         <Route path="/presentation" element={<PresentationPage />} />
+        <Route path="/overlay" element={<OverlayPage />} />
 
         {/* Main app layout */}
         <Route element={<Layout />}>

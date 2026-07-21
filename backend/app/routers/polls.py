@@ -183,3 +183,28 @@ async def delete_poll(poll_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Poll not found")
     await db.delete(poll)
     return {"status": "deleted"}
+
+
+@router.get("/{poll_id}/voters")
+async def get_poll_voters(poll_id: int, db: AsyncSession = Depends(get_db)):
+    """Get list of voters categorized by option for a poll."""
+    from app.models import PollVote, PollOption, Student
+    result = await db.execute(
+        select(PollVote, PollOption, Student)
+        .join(PollOption, PollVote.option_id == PollOption.id)
+        .join(Student, PollVote.student_id == Student.id)
+        .where(PollVote.poll_id == poll_id)
+    )
+    voters_data = []
+    for vote, option, student in result.all():
+        voters_data.append({
+            "vote_id": vote.id,
+            "option_id": option.id,
+            "option_keyword": option.keyword,
+            "option_text": option.text,
+            "student_id": student.id,
+            "student_name": student.display_name,
+            "student_avatar": student.avatar_url,
+            "voted_at": vote.created_at.isoformat() if vote.created_at else None
+        })
+    return voters_data

@@ -14,8 +14,9 @@
   body {
     @apply bg-surface-950 text-white font-sans antialiased;
     background-image: 
-      radial-gradient(ellipse at 20% 50%, rgba(99, 112, 240, 0.06) 0%, transparent 50%),
-      radial-gradient(ellipse at 80% 20%, rgba(139, 92, 246, 0.06) 0%, transparent 50%);
+      radial-gradient(ellipse at 15% 40%, rgba(6, 182, 212, 0.12) 0%, transparent 50%),
+      radial-gradient(ellipse at 85% 15%, rgba(168, 85, 247, 0.12) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 85%, rgba(0, 240, 255, 0.05) 0%, transparent 60%);
     min-height: 100vh;
   }
 
@@ -224,12 +225,30 @@
   @apply fixed inset-0 bg-surface-950 z-50 flex flex-col;
 }
 
-/* Number counter animation */
+/* Number counter & timer animation */
 @keyframes number-roll {
   0% { transform: translateY(100%); opacity: 0; }
   100% { transform: translateY(0); opacity: 1; }
 }
 
+@keyframes timer-pop {
+  0% { transform: scale(1.25); filter: brightness(1.3); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+@keyframes warning-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.75; transform: scale(1.04); }
+}
+
 .number-roll {
   animation: number-roll 0.4s ease-out;
+}
+
+.animate-timer-pop {
+  animation: timer-pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.animate-warning-pulse {
+  animation: warning-pulse 0.8s infinite ease-in-out;
 }

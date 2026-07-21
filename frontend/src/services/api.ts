@@ -67,6 +67,9 @@ export const pollsApi = {
 
   delete: (id: number) =>
     api.delete(`/polls/${id}`).then(r => r.data),
+
+  getVoters: (id: number) =>
+    api.get(`/polls/${id}/voters`).then(r => r.data),
 };
 
 // ─── Quiz ──────────────────────────────────────────────────────────────────────

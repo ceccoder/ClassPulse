@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, BarChart2, HelpCircle, ClipboardList,
   Trophy, Zap, FileText, History, Monitor, Settings,
-  ChevronLeft, Wifi
+  ChevronLeft, Layers
 } from 'lucide-react';
 import { useUIStore, useSessionStore } from '@/store';
 
@@ -16,6 +16,7 @@ const navItems = [
   { path: '/reports', icon: FileText, label: 'Reports' },
   { path: '/history', icon: History, label: 'History' },
   { path: '/presentation', icon: Monitor, label: 'Present' },
+  { path: '/overlay', icon: Layers, label: 'Overlay Widget' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -67,7 +68,7 @@ export default function Sidebar() {
           <NavLink
             key={path}
             to={path}
-            target={path === '/presentation' ? '_blank' : undefined}
+            target={(path === '/presentation' || path === '/overlay') ? '_blank' : undefined}
             className={({ isActive }) =>
               isActive ? 'nav-item-active' : 'nav-item'
             }

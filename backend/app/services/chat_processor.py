@@ -40,15 +40,33 @@ class ChatProcessor:
             elif text_lower.startswith("#hand"):
                 await self._handle_hand_raise(db, msg, student, session_id)
 
-            # Check for poll votes (A, B, C, D, 1, 2, 3, 4...)
-            elif re.match(r'^[a-zA-Z1-9]$', text.strip()):
-                await self._handle_poll_vote(db, student, text.strip().upper(), session_id)
-
-            # Check for quiz answers
-            elif re.match(r'^[a-zA-Z1-9]$', text.strip()):
-                await self._handle_quiz_answer(db, student, text.strip().upper(), session_id, msg.timestamp)
+            # Check for poll votes / quiz answers (A, B, C, D, 1, 2, 3, 4, aaa, Bbb, Option A, etc.)
+            elif self._extract_vote_keyword(text):
+                keyword = self._extract_vote_keyword(text)
+                if keyword:
+                    voted = await self._handle_poll_vote(db, student, keyword, session_id)
+                    if not voted:
+                        await self._handle_quiz_answer(db, student, keyword, session_id, msg.timestamp)
 
             await db.commit()
+
+    def _extract_vote_keyword(self, text: str) -> Optional[str]:
+        """Normalize answer variations like 'aaa', 'Bbb', 'CC', 'option A', 'A' -> 'A'."""
+        cleaned = text.strip()
+        # Single char or single digit (e.g. 'A', '1')
+        if re.match(r'^[a-zA-Z1-9]$', cleaned):
+            return cleaned.upper()
+        
+        # 'Option A', 'Ans B', '#A'
+        m = re.search(r'\b(?:option|ans|answer|#)?\s*([a-zA-Z1-9])\b', cleaned, re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+
+        # Repeated letters like 'aaa', 'BBB', 'CCCC'
+        if re.match(r'^([a-zA-Z])\1+$', cleaned):
+            return cleaned[0].upper()
+
+        return None
 
     async def _get_or_create_student(
         self,
@@ -159,8 +177,8 @@ class ChatProcessor:
     async def _handle_poll_vote(
         self, db: AsyncSession, student: Student,
         answer: str, session_id: int
-    ):
-        """Handle a poll vote."""
+    ) -> bool:
+        """Handle a poll vote. Returns True if voted, False if no active poll or option match."""
         # Find active poll for this session
         result = await db.execute(
             select(Poll).where(
@@ -172,9 +190,7 @@ class ChatProcessor:
         )
         poll = result.scalar_one_or_none()
         if poll is None:
-            # Maybe it's a quiz answer
-            await self._handle_quiz_answer(db, student, answer, session_id, datetime.utcnow())
-            return
+            return False
 
         # Find the matching option
         result = await db.execute(
@@ -187,7 +203,7 @@ class ChatProcessor:
         )
         option = result.scalar_one_or_none()
         if option is None:
-            return
+            return False
 
         # Check if student already voted
         result = await db.execute(
@@ -246,6 +262,7 @@ class ChatProcessor:
             },
             session_id
         )
+        return True
 
     async def _handle_quiz_answer(
         self, db: AsyncSession, student: Student,

@@ -1,7 +1,16 @@
 @echo off
 echo Starting ClassPulse...
 
-start cmd /k "cd backend && python run.py"
+if not exist "backend\venv" (
+    echo Creating Python virtual environment...
+    cd backend
+    python -m venv venv
+    call venv\Scripts\activate
+    pip install -r requirements.txt
+    cd ..
+)
+
+start cmd /k "cd backend && call venv\Scripts\activate && python run.py"
 start cmd /k "cd frontend && npm run dev"
 
 echo Backend started on http://localhost:8000
