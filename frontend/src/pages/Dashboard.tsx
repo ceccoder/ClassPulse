@@ -5,7 +5,7 @@ import {
   Hand, Plus, Play, Square, Wifi, Radio
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { sessionsApi, leaderboardApi, analyticsApi } from '@/services/api';
+import { sessionsApi, leaderboardApi, analyticsApi, pollsApi } from '@/services/api';
 import { useSessionStore, usePollStore } from '@/store';
 import { useWebSocket, useWSEvent } from '@/hooks/useWebSocket';
 import { formatDateTime, formatRelativeTime, POLL_COLORS, percentage, extractYouTubeVideoId } from '@/utils';
@@ -14,7 +14,7 @@ import type { ClassSession } from '@/types';
 export default function Dashboard() {
   const queryClient = useQueryClient();
   const { activeSession, setActiveSession } = useSessionStore();
-  const { polls, activePoll, updatePoll } = usePollStore();
+  const { polls, activePoll, setPolls, updatePoll } = usePollStore();
   const [showNewSession, setShowNewSession] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newStreamId, setNewStreamId] = useState('');
@@ -24,6 +24,19 @@ export default function Dashboard() {
 
   // Connect WS
   useWebSocket(activeSession?.id ?? null);
+
+  // Polls query to keep active poll synced on Dashboard
+  useQuery({
+    queryKey: ['dashboard-polls', activeSession?.id],
+    queryFn: async () => {
+      if (!activeSession) return [];
+      const data = await pollsApi.getBySession(activeSession.id);
+      setPolls(data);
+      return data;
+    },
+    enabled: !!activeSession,
+    refetchInterval: 3000,
+  });
 
   // Handle real-time updates
   useWSEvent('new_student', () => {

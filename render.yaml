@@ -1,10 +1,9 @@
 services:
   - type: web
-    name: classpulse-backend
+    name: classpulse
     env: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: python run.py
+    buildCommand: cd frontend && npm install && npm run build && cd ../backend && pip install -r requirements.txt
+    startCommand: cd backend && python run.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0

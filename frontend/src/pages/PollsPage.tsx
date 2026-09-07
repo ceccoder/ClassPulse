@@ -71,9 +71,9 @@ export default function PollsPage() {
       setQuestion('');
       setOptions(DEFAULT_4_OPTIONS);
       
-      // Auto-start poll with timer if set
+      // Auto-start poll so it transitions from draft to active immediately
+      await pollsApi.start(poll.id);
       if (timerSeconds > 0) {
-        await pollsApi.start(poll.id);
         setTimeLeft(timerSeconds);
       }
       queryClient.invalidateQueries({ queryKey: ['polls', activeSession?.id] });

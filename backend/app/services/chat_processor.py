@@ -218,7 +218,7 @@ class ChatProcessor:
 
         if existing_vote:
             if not poll.allow_vote_change:
-                return
+                return True
             # Change vote
             old_option_result = await db.execute(
                 select(PollOption).where(PollOption.id == existing_vote.option_id)
