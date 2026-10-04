@@ -241,6 +241,11 @@ class ChatProcessor:
         if option is None:
             return False
 
+        # Check if answer is correct if correct_keyword is configured
+        is_correct = None
+        if poll.correct_keyword:
+            is_correct = (answer_keyword.upper() == poll.correct_keyword.upper())
+
         # Check existing vote
         result = await db.execute(
             select(PollVote).where(
@@ -263,8 +268,16 @@ class ChatProcessor:
                 old_option = old_option_result.scalar_one_or_none()
                 if old_option:
                     old_option.vote_count = max(0, old_option.vote_count - 1)
+                    # Deduct score if old vote was correct in a correct-answer poll
+                    if poll.correct_keyword and old_option.keyword.upper() == poll.correct_keyword.upper():
+                        student.score = max(0, student.score - 1)
+
                 existing_vote.option_id = option.id
                 option.vote_count += 1
+
+                # Award score if new vote is correct in a correct-answer poll
+                if poll.correct_keyword and is_correct:
+                    student.score += 1
         else:
             # First vote
             vote = PollVote(
@@ -277,12 +290,15 @@ class ChatProcessor:
             poll.total_votes += 1
             student.poll_participations += 1
 
-        await db.flush()
+            # Leaderboard Score Logic:
+            # 1. Opinion poll (no correct_keyword): participation awards +1 point
+            # 2. Correct answer poll (correct_keyword set): correct answer awards +1 point
+            if not poll.correct_keyword:
+                student.score += 1
+            elif is_correct:
+                student.score += 1
 
-        # Check if answer is correct if correct_keyword is configured
-        is_correct = None
-        if poll.correct_keyword:
-            is_correct = (answer_keyword.upper() == poll.correct_keyword.upper())
+        await db.flush()
 
         # Log activity
         await self._log_activity(
