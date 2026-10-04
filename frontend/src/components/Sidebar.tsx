@@ -1,23 +1,13 @@
 import { NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, BarChart2, HelpCircle, ClipboardList,
-  Trophy, Zap, FileText, History, Monitor, Settings,
-  ChevronLeft, Layers
+  LayoutDashboard, BarChart2, FileText, ChevronLeft
 } from 'lucide-react';
 import { useUIStore, useSessionStore } from '@/store';
 
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { path: '/polls', icon: BarChart2, label: 'Polls' },
-  { path: '/quiz', icon: HelpCircle, label: 'Quiz' },
-  { path: '/attendance', icon: ClipboardList, label: 'Attendance' },
-  { path: '/leaderboard', icon: Trophy, label: 'Leaderboard' },
-  { path: '/activity', icon: Zap, label: 'Activity' },
-  { path: '/reports', icon: FileText, label: 'Reports' },
-  { path: '/history', icon: History, label: 'History' },
-  { path: '/presentation', icon: Monitor, label: 'Present' },
-  { path: '/overlay', icon: Layers, label: 'Overlay Widget' },
-  { path: '/settings', icon: Settings, label: 'Settings' },
+  { path: '/polls', icon: BarChart2, label: 'Poll Management' },
+  { path: '/reports', icon: FileText, label: 'Analytics & Reports' },
 ];
 
 export default function Sidebar() {
@@ -63,12 +53,11 @@ export default function Sidebar() {
       )}
 
       {/* Nav items */}
-      <nav className="flex-1 overflow-y-auto no-scrollbar py-3 px-2 space-y-0.5">
+      <nav className="flex-1 overflow-y-auto no-scrollbar py-4 px-2 space-y-1">
         {navItems.map(({ path, icon: Icon, label }) => (
           <NavLink
             key={path}
             to={path}
-            target={(path === '/presentation' || path === '/overlay') ? '_blank' : undefined}
             className={({ isActive }) =>
               isActive ? 'nav-item-active' : 'nav-item'
             }
