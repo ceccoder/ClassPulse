@@ -126,7 +126,7 @@ export default function LiveChatFeed() {
             <MessageSquare size={32} className="opacity-30 mb-2" />
             <p className="text-xs">No chat messages received yet</p>
             <p className="text-[11px] mt-1 text-surface-600">
-              Messages will appear here live when YouTube polling or Mock Simulator is active.
+              Messages will appear here live when YouTube Live polling is active.
             </p>
           </div>
         )}

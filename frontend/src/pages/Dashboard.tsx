@@ -11,7 +11,6 @@ import { useWebSocket, useWSEvent } from '@/hooks/useWebSocket';
 import { formatDateTime, formatRelativeTime, POLL_COLORS, percentage, extractYouTubeVideoId } from '@/utils';
 import PollChart from '@/components/PollChart';
 import LiveChatFeed from '@/components/LiveChatFeed';
-import MockSimulatorControl from '@/components/MockSimulatorControl';
 import type { ClassSession } from '@/types';
 
 export default function Dashboard() {
@@ -303,8 +302,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Mock Chat Simulator Control Panel */}
-      {activeSession && <MockSimulatorControl sessionId={activeSession.id} />}
+
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
