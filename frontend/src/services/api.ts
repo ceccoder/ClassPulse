@@ -36,15 +36,6 @@ export const sessionsApi = {
 
   stopPolling: (id: number) =>
     api.post(`/sessions/${id}/stop-polling`).then(r => r.data),
-
-  startMock: (id: number) =>
-    api.post(`/sessions/${id}/start-mock`).then(r => r.data),
-
-  stopMock: (id: number) =>
-    api.post(`/sessions/${id}/stop-mock`).then(r => r.data),
-
-  sendMockMessage: (id: number, text: string, author_name?: string) =>
-    api.post(`/sessions/${id}/send-mock-message`, { text, author_name: author_name || 'Test Student' }).then(r => r.data),
 };
 
 // ─── Polls ─────────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users, CheckCircle, BarChart2, Hand, Plus, Play, Pause, Square, RotateCcw,
-  Wifi, Radio, Zap, Check, HelpCircle, AlertCircle, Clock
+  Wifi, Radio, Zap, Check, HelpCircle, AlertCircle, Clock, Trash2
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { sessionsApi, leaderboardApi, analyticsApi, pollsApi } from '@/services/api';
@@ -11,15 +11,33 @@ import { useWebSocket, useWSEvent } from '@/hooks/useWebSocket';
 import { formatDateTime, formatRelativeTime, POLL_COLORS, percentage, extractYouTubeVideoId } from '@/utils';
 import PollChart from '@/components/PollChart';
 import LiveChatFeed from '@/components/LiveChatFeed';
-import type { ClassSession } from '@/types';
+import type { ClassSession, Poll } from '@/types';
+
+const DEFAULT_4_OPTIONS = [
+  { text: 'Option A', keyword: 'A' },
+  { text: 'Option B', keyword: 'B' },
+  { text: 'Option C', keyword: 'C' },
+  { text: 'Option D', keyword: 'D' },
+];
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
   const { activeSession, setActiveSession } = useSessionStore();
   const { polls, activePoll, setPolls, updatePoll } = usePollStore();
   const [showNewSession, setShowNewSession] = useState(false);
+  const [showCreatePoll, setShowCreatePoll] = useState(false);
+
+  // Session form state
   const [newTitle, setNewTitle] = useState('');
   const [newStreamId, setNewStreamId] = useState('');
+
+  // Poll form state on Dashboard
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollAllowChange, setPollAllowChange] = useState(true);
+  const [pollCorrectKeyword, setPollCorrectKeyword] = useState('');
+  const [pollDurationSeconds, setPollDurationSeconds] = useState<number | null>(30);
+  const [pollOptions, setPollOptions] = useState(DEFAULT_4_OPTIONS);
+
   const [liveStudents, setLiveStudents] = useState(0);
   const [presentCount, setPresentCount] = useState(0);
   const [handCount, setHandCount] = useState(0);
@@ -94,6 +112,32 @@ export default function Dashboard() {
   }, [stats]);
 
   // Poll actions
+  const createAndLaunchPoll = useMutation({
+    mutationFn: async () => {
+      if (!activeSession) throw new Error("No active session");
+      const created = await pollsApi.create({
+        session_id: activeSession.id,
+        question: pollQuestion.trim() || 'Live Class Poll (A/B/C/D)',
+        options: pollOptions.map(o => ({ ...o, text: o.text.trim() || `Option ${o.keyword}` })),
+        allow_vote_change: pollAllowChange,
+        correct_keyword: pollCorrectKeyword || null,
+        duration_seconds: pollDurationSeconds || null,
+      });
+      return pollsApi.start(created.id);
+    },
+    onSuccess: (pollData) => {
+      toast.success('Poll created & launched live!');
+      setShowCreatePoll(false);
+      setPollQuestion('');
+      setPollCorrectKeyword('');
+      setPollDurationSeconds(30);
+      setPollOptions(DEFAULT_4_OPTIONS);
+      updatePoll(pollData);
+      queryClient.invalidateQueries({ queryKey: ['dashboard-polls', activeSession?.id] });
+    },
+    onError: () => toast.error('Failed to launch poll'),
+  });
+
   const startPollMutation = useMutation({
     mutationFn: (pollId: number) => pollsApi.start(pollId),
     onSuccess: (data) => {
@@ -154,7 +198,7 @@ export default function Dashboard() {
           toast.success('Started polling YouTube Live chat!');
           setActiveSession({ ...session, is_polling: true });
         } catch (err: any) {
-          const detail = err?.response?.data?.detail || 'Configured stream ID. Set YouTube API key in settings to enable live polling.';
+          const detail = err?.response?.data?.detail || 'Ensure a valid YouTube Live stream URL or ID is provided.';
           toast.error(detail);
         }
       }
@@ -186,7 +230,7 @@ export default function Dashboard() {
       if (activeSession) setActiveSession({ ...activeSession, is_polling: true });
     },
     onError: (err: any) => {
-      const detail = err?.response?.data?.detail || 'Failed to start polling. Check API Key and Stream ID.';
+      const detail = err?.response?.data?.detail || 'Ensure a valid YouTube live stream URL or video ID is provided.';
       toast.error(detail);
     }
   });
@@ -217,6 +261,17 @@ export default function Dashboard() {
   }, [serverActiveSession, isSuccess, activeSession, setActiveSession]);
 
   const activePollSummary = analyticsOverview?.polls?.find((p: any) => p.id === activePoll?.id);
+
+  const addPollOption = () => {
+    if (pollOptions.length >= 6) return;
+    const next = String.fromCharCode(65 + pollOptions.length);
+    setPollOptions([...pollOptions, { text: '', keyword: next }]);
+  };
+
+  const removePollOption = (i: number) => {
+    if (pollOptions.length <= 2) return;
+    setPollOptions(pollOptions.filter((_, idx) => idx !== i));
+  };
 
   const statCards = [
     {
@@ -260,6 +315,15 @@ export default function Dashboard() {
         <div className="flex flex-wrap items-center gap-3">
           {activeSession && (
             <>
+              {/* PROMINENT CREATE POLL BUTTON ON HOME PAGE */}
+              <button
+                onClick={() => setShowCreatePoll(true)}
+                className="btn-primary flex items-center gap-2 font-bold px-4 py-2 bg-gradient-to-r from-brand-600 to-brand-500 shadow-lg shadow-brand-500/25"
+              >
+                <Plus size={18} />
+                Create Poll
+              </button>
+
               {activeSession.is_polling ? (
                 <button
                   onClick={() => stopPolling.mutate()}
@@ -301,8 +365,6 @@ export default function Dashboard() {
           )}
         </div>
       </div>
-
-
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -487,9 +549,17 @@ export default function Dashboard() {
               <div className="text-center py-12 text-surface-500">
                 <BarChart2 size={40} className="mx-auto mb-3 opacity-30 text-brand-400" />
                 <p className="text-base font-medium text-surface-300">No poll currently active</p>
-                <p className="text-xs mt-1 text-surface-500 max-w-sm mx-auto">
-                  Create a new poll in the Polls section or activate an existing poll to start receiving live student votes.
+                <p className="text-xs mt-1 text-surface-500 max-w-sm mx-auto mb-4">
+                  Create a poll right here on your dashboard to start receiving live student responses.
                 </p>
+                {activeSession && (
+                  <button
+                    onClick={() => setShowCreatePoll(true)}
+                    className="btn-primary inline-flex items-center gap-2 text-xs py-2 px-4"
+                  >
+                    <Plus size={16} /> Create Poll Now
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -500,6 +570,129 @@ export default function Dashboard() {
           <LiveChatFeed />
         </div>
       </div>
+
+      {/* CREATE POLL MODAL DIRECTLY ON DASHBOARD HOME PAGE */}
+      {showCreatePoll && activeSession && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="glass-card p-6 w-full max-w-lg space-y-4 animate-slide-up max-h-[90vh] overflow-y-auto">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <BarChart2 size={20} className="text-brand-400" />
+              Create & Launch Poll Live
+            </h2>
+
+            <div>
+              <label className="text-sm text-surface-400 mb-1 block font-medium">Poll Question</label>
+              <input
+                className="input"
+                placeholder="Ask your students (e.g. What is the output of line 4?)"
+                value={pollQuestion}
+                onChange={e => setPollQuestion(e.target.value)}
+              />
+            </div>
+
+            {/* Duration & Correct Answer Dropdowns */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm text-surface-400 mb-1 flex items-center gap-1.5 block font-medium">
+                  <Clock size={14} className="text-brand-400" /> Duration Timer
+                </label>
+                <select
+                  value={pollDurationSeconds ?? ''}
+                  onChange={e => setPollDurationSeconds(e.target.value ? Number(e.target.value) : null)}
+                  className="input text-xs"
+                >
+                  <option value="">No Duration (Manual End)</option>
+                  <option value="15">15 Seconds</option>
+                  <option value="30">30 Seconds</option>
+                  <option value="60">60 Seconds (1 Min)</option>
+                  <option value="120">120 Seconds (2 Mins)</option>
+                  <option value="300">300 Seconds (5 Mins)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm text-surface-400 mb-1 flex items-center gap-1.5 block font-medium">
+                  <Check size={14} className="text-accent-emerald" /> Correct Answer (Optional)
+                </label>
+                <select
+                  value={pollCorrectKeyword}
+                  onChange={e => setPollCorrectKeyword(e.target.value)}
+                  className="input text-xs"
+                >
+                  <option value="">None (Survey / Opinion)</option>
+                  {pollOptions.map(opt => (
+                    <option key={opt.keyword} value={opt.keyword}>
+                      Option {opt.keyword} ({opt.text || `Option ${opt.keyword}`})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Options List */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm text-surface-400 font-medium">Poll Options (2-6 options)</label>
+                {pollOptions.length < 6 && (
+                  <button onClick={addPollOption} className="text-xs text-brand-400 hover:text-brand-300 font-medium">
+                    + Add Option
+                  </button>
+                )}
+              </div>
+              <div className="space-y-2">
+                {pollOptions.map((opt, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <div
+                      className="w-8 h-8 rounded text-xs font-bold flex items-center justify-center text-white flex-shrink-0"
+                      style={{ backgroundColor: POLL_COLORS[i % POLL_COLORS.length] }}
+                    >
+                      {opt.keyword}
+                    </div>
+                    <input
+                      className="input flex-1 text-xs"
+                      placeholder={`Option ${opt.keyword}`}
+                      value={opt.text}
+                      onChange={e => {
+                        const updated = [...pollOptions];
+                        updated[i] = { ...updated[i], text: e.target.value };
+                        setPollOptions(updated);
+                      }}
+                    />
+                    {pollOptions.length > 2 && (
+                      <button onClick={() => removePollOption(i)} className="btn-icon text-accent-rose">
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer pt-1">
+              <input
+                type="checkbox"
+                checked={pollAllowChange}
+                onChange={e => setPollAllowChange(e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-xs text-surface-300">Allow students to change vote during active poll</span>
+            </label>
+
+            <div className="flex gap-3 pt-3">
+              <button
+                onClick={() => createAndLaunchPoll.mutate()}
+                className="btn-primary flex-1 py-2.5 font-semibold text-sm bg-gradient-to-r from-brand-600 to-brand-500 shadow-lg shadow-brand-500/25"
+                disabled={createAndLaunchPoll.isPending}
+              >
+                {createAndLaunchPoll.isPending ? 'Launching...' : 'Create & Launch Poll Live'}
+              </button>
+              <button onClick={() => setShowCreatePoll(false)} className="btn-secondary">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* New Session Modal */}
       {showNewSession && (
