@@ -15,8 +15,6 @@ YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
 import os
 
-EMBEDDED_YOUTUBE_API_KEY = "AIzaSyDwh3B1QlLQJkPQV_rhnV3UzTlOh3c_VF8"
-
 
 class YouTubeConnector(BaseConnector):
     """YouTube Live chat connector."""
@@ -25,7 +23,7 @@ class YouTubeConnector(BaseConnector):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.api_key = config.get("api_key") or os.environ.get("YOUTUBE_API_KEY") or EMBEDDED_YOUTUBE_API_KEY
+        self.api_key = config.get("api_key") or os.environ.get("YOUTUBE_API_KEY", "")
         self._client = httpx.AsyncClient(timeout=30.0)
 
     async def get_live_chat_id(self, stream_id: str) -> Optional[str]:

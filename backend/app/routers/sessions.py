@@ -12,7 +12,7 @@ from app.database import get_db
 from app.models import ClassSession, SessionStatus
 from app.schemas.schemas import SessionCreate, SessionUpdate, SessionOut
 from app.services.polling import polling_service
-from app.connectors.youtube import YouTubeConnector, EMBEDDED_YOUTUBE_API_KEY
+from app.connectors.youtube import YouTubeConnector
 
 router = APIRouter()
 
@@ -109,12 +109,12 @@ async def start_polling(session_id: int, db: AsyncSession = Depends(get_db)):
     if not session:
         raise HTTPException(404, "Session not found")
 
-    # Get API key from settings DB, env var, or embedded default
+    # Get API key from settings DB or environment variable
     api_key_result = await db.execute(
         select(AppSettings).where(AppSettings.key == "youtube_api_key")
     )
     api_key_setting = api_key_result.scalar_one_or_none()
-    api_key = (api_key_setting.value if api_key_setting and api_key_setting.value.strip() else "") or os.environ.get("YOUTUBE_API_KEY", "") or EMBEDDED_YOUTUBE_API_KEY
+    api_key = (api_key_setting.value if api_key_setting and api_key_setting.value.strip() else "") or os.environ.get("YOUTUBE_API_KEY", "")
 
     live_chat_id = session.live_chat_id
     if not live_chat_id and session.stream_id:
