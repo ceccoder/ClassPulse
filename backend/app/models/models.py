@@ -83,6 +83,8 @@ class Poll(Base):
     question: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[PollStatus] = mapped_column(SAEnum(PollStatus), default=PollStatus.draft)
     allow_vote_change: Mapped[bool] = mapped_column(Boolean, default=True)
+    correct_keyword: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     total_votes: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

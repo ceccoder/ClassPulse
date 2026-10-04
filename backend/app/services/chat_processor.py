@@ -1,11 +1,10 @@
 """
-Chat processor service: parses incoming chat messages and triggers
-game events (polls, attendance, hand raise, quiz answers).
+Chat processor service: parses incoming chat messages using the modular VoteDetector engine,
+manages poll votes, attendance, hand raises, quiz answers, and broadcasts real-time WebSocket events.
 """
 import asyncio
-import re
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
@@ -15,58 +14,95 @@ from app.models import (
     ActivityLog, PollStatus, QuizStatus
 )
 from app.connectors.base import ChatMessage
+from app.services.vote_detector import default_vote_detector
 from app.websocket.manager import manager
 
 
 class ChatProcessor:
-    """Processes chat messages and triggers ClassPulse events."""
+    """Processes live chat messages and triggers ClassPulse events."""
 
-    def __init__(self, db_session_factory):
+    def __init__(self, db_session_factory, vote_detector=None):
         self.db_session_factory = db_session_factory
+        self.vote_detector = vote_detector or default_vote_detector
 
     async def process_message(self, msg: ChatMessage, session_id: int):
-        """Route a chat message to the appropriate handler."""
+        """Route a chat message to appropriate handlers and broadcast real-time chat event."""
         text = msg.text.strip()
         text_lower = text.lower()
 
         async with self.db_session_factory() as db:
             student = await self._get_or_create_student(db, msg, session_id)
 
-            # Check for #present (attendance)
+            # Get active poll to check valid keywords
+            active_poll_keywords, active_poll = await self._get_active_poll_details(db, session_id)
+
+            # Check if this text is a vote using modular VoteDetector
+            detected_keyword = self.vote_detector.detect_vote(text, active_poll_keywords) if active_poll_keywords else None
+
+            is_vote = False
+            is_correct = None
+            voted_keyword = None
+
+            # Handle commands and events
             if text_lower.startswith("#present"):
                 await self._handle_attendance(db, msg, student, session_id)
-
-            # Check for #hand (raise hand)
             elif text_lower.startswith("#hand"):
                 await self._handle_hand_raise(db, msg, student, session_id)
+            elif detected_keyword:
+                voted = await self._handle_poll_vote(db, student, detected_keyword, session_id, active_poll)
+                if voted:
+                    is_vote = True
+                    voted_keyword = detected_keyword
+                    if active_poll and active_poll.correct_keyword:
+                        is_correct = (detected_keyword.upper() == active_poll.correct_keyword.upper())
+                else:
+                    # If not voted in poll, check quiz answer
+                    await self._handle_quiz_answer(db, student, detected_keyword, session_id, msg.timestamp)
+            else:
+                # Check for single char fallback if quiz is active
+                fallback_kw = self.vote_detector.detect_vote(text, ["A", "B", "C", "D", "1", "2", "3", "4"])
+                if fallback_kw:
+                    await self._handle_quiz_answer(db, student, fallback_kw, session_id, msg.timestamp)
 
-            # Check for poll votes / quiz answers (A, B, C, D, 1, 2, 3, 4, aaa, Bbb, Option A, etc.)
-            elif self._extract_vote_keyword(text):
-                keyword = self._extract_vote_keyword(text)
-                if keyword:
-                    voted = await self._handle_poll_vote(db, student, keyword, session_id)
-                    if not voted:
-                        await self._handle_quiz_answer(db, student, keyword, session_id, msg.timestamp)
+            # Broadcast raw live chat message feed event to all WebSocket clients
+            await manager.broadcast(
+                "chat_message",
+                {
+                    "message_id": msg.message_id,
+                    "author_id": msg.author_id,
+                    "author_name": msg.author_name,
+                    "author_avatar": msg.author_avatar,
+                    "text": msg.text,
+                    "timestamp": msg.timestamp.isoformat() if hasattr(msg.timestamp, 'isoformat') else str(msg.timestamp),
+                    "is_vote": is_vote,
+                    "voted_keyword": voted_keyword,
+                    "is_correct": is_correct
+                },
+                session_id
+            )
 
             await db.commit()
 
-    def _extract_vote_keyword(self, text: str) -> Optional[str]:
-        """Normalize answer variations like 'aaa', 'Bbb', 'CC', 'option A', 'A' -> 'A'."""
-        cleaned = text.strip()
-        # Single char or single digit (e.g. 'A', '1')
-        if re.match(r'^[a-zA-Z1-9]$', cleaned):
-            return cleaned.upper()
-        
-        # 'Option A', 'Ans B', '#A'
-        m = re.search(r'\b(?:option|ans|answer|#)?\s*([a-zA-Z1-9])\b', cleaned, re.IGNORECASE)
-        if m:
-            return m.group(1).upper()
+    async def _get_active_poll_details(self, db: AsyncSession, session_id: int) -> tuple[List[str], Optional[Poll]]:
+        """Fetch active poll and its available option keywords."""
+        result = await db.execute(
+            select(Poll).where(
+                and_(
+                    Poll.session_id == session_id,
+                    Poll.status == PollStatus.active
+                )
+            )
+        )
+        poll = result.scalar_one_or_none()
+        if not poll:
+            return [], None
 
-        # Repeated letters like 'aaa', 'BBB', 'CCCC'
-        if re.match(r'^([a-zA-Z])\1+$', cleaned):
-            return cleaned[0].upper()
-
-        return None
+        opts_result = await db.execute(
+            select(PollOption).where(PollOption.poll_id == poll.id)
+        )
+        options = opts_result.scalars().all()
+        keywords = [o.keyword.upper() for o in options]
+        return keywords, poll
 
     async def _get_or_create_student(
         self,
@@ -97,7 +133,6 @@ class ChatProcessor:
             db.add(student)
             await db.flush()
 
-            # Log new student event
             await self._log_activity(
                 db, session_id, "new_student",
                 f"{msg.author_name} joined the class",
@@ -105,7 +140,7 @@ class ChatProcessor:
             )
             await manager.broadcast(
                 "new_student",
-                {"student_id": student.id, "name": msg.author_name},
+                {"student_id": student.id, "name": msg.author_name, "avatar": msg.author_avatar},
                 session_id
             )
         else:
@@ -129,7 +164,7 @@ class ChatProcessor:
             )
         )
         if existing.scalar_one_or_none():
-            return  # Already marked present
+            return
 
         attendance = Attendance(
             session_id=session_id,
@@ -176,28 +211,29 @@ class ChatProcessor:
 
     async def _handle_poll_vote(
         self, db: AsyncSession, student: Student,
-        answer: str, session_id: int
+        answer_keyword: str, session_id: int, poll: Optional[Poll] = None
     ) -> bool:
-        """Handle a poll vote. Returns True if voted, False if no active poll or option match."""
-        # Find active poll for this session
-        result = await db.execute(
-            select(Poll).where(
-                and_(
-                    Poll.session_id == session_id,
-                    Poll.status == PollStatus.active
+        """Handle a poll vote with duplicate vote check and real-time broadcasting."""
+        if poll is None:
+            result = await db.execute(
+                select(Poll).where(
+                    and_(
+                        Poll.session_id == session_id,
+                        Poll.status == PollStatus.active
+                    )
                 )
             )
-        )
-        poll = result.scalar_one_or_none()
+            poll = result.scalar_one_or_none()
+
         if poll is None:
             return False
 
-        # Find the matching option
+        # Find matching option by keyword
         result = await db.execute(
             select(PollOption).where(
                 and_(
                     PollOption.poll_id == poll.id,
-                    PollOption.keyword == answer
+                    PollOption.keyword == answer_keyword.upper()
                 )
             )
         )
@@ -205,7 +241,7 @@ class ChatProcessor:
         if option is None:
             return False
 
-        # Check if student already voted
+        # Check existing vote
         result = await db.execute(
             select(PollVote).where(
                 and_(
@@ -219,17 +255,18 @@ class ChatProcessor:
         if existing_vote:
             if not poll.allow_vote_change:
                 return True
-            # Change vote
-            old_option_result = await db.execute(
-                select(PollOption).where(PollOption.id == existing_vote.option_id)
-            )
-            old_option = old_option_result.scalar_one_or_none()
-            if old_option:
-                old_option.vote_count = max(0, old_option.vote_count - 1)
-            existing_vote.option_id = option.id
-            option.vote_count += 1
+            # Change vote from previous option
+            if existing_vote.option_id != option.id:
+                old_option_result = await db.execute(
+                    select(PollOption).where(PollOption.id == existing_vote.option_id)
+                )
+                old_option = old_option_result.scalar_one_or_none()
+                if old_option:
+                    old_option.vote_count = max(0, old_option.vote_count - 1)
+                existing_vote.option_id = option.id
+                option.vote_count += 1
         else:
-            # New vote
+            # First vote
             vote = PollVote(
                 poll_id=poll.id,
                 option_id=option.id,
@@ -242,9 +279,22 @@ class ChatProcessor:
 
         await db.flush()
 
-        # Broadcast updated poll results
+        # Check if answer is correct if correct_keyword is configured
+        is_correct = None
+        if poll.correct_keyword:
+            is_correct = (answer_keyword.upper() == poll.correct_keyword.upper())
+
+        # Log activity
+        await self._log_activity(
+            db, session_id, "poll_vote",
+            f"{student.display_name} voted for Option {answer_keyword.upper()}",
+            student.display_name,
+            {"poll_id": poll.id, "option_keyword": answer_keyword.upper(), "is_correct": is_correct}
+        )
+
+        # Broadcast updated options & votes
         results = await db.execute(
-            select(PollOption).where(PollOption.poll_id == poll.id)
+            select(PollOption).where(PollOption.poll_id == poll.id).order_by(PollOption.id)
         )
         options_list = results.scalars().all()
 
@@ -253,7 +303,10 @@ class ChatProcessor:
             {
                 "poll_id": poll.id,
                 "student_id": student.id,
-                "option_keyword": answer,
+                "student_name": student.display_name,
+                "student_avatar": student.avatar_url,
+                "option_keyword": answer_keyword.upper(),
+                "is_correct": is_correct,
                 "options": [
                     {"id": o.id, "keyword": o.keyword, "text": o.text, "vote_count": o.vote_count}
                     for o in options_list
@@ -268,8 +321,7 @@ class ChatProcessor:
         self, db: AsyncSession, student: Student,
         answer: str, session_id: int, timestamp: datetime
     ):
-        """Handle a quiz answer."""
-        # Find active quiz
+        """Handle quiz answer."""
         result = await db.execute(
             select(Quiz).where(
                 and_(
@@ -282,7 +334,6 @@ class ChatProcessor:
         if quiz is None:
             return
 
-        # Find active question
         result = await db.execute(
             select(QuizQuestion).where(
                 and_(
@@ -295,7 +346,6 @@ class ChatProcessor:
         if question is None:
             return
 
-        # Check if already answered
         result = await db.execute(
             select(QuizAnswer).where(
                 and_(
@@ -308,18 +358,14 @@ class ChatProcessor:
             return
 
         is_correct = answer.upper() == question.correct_answer.upper()
-
-        # Calculate response time and points
         response_time_ms = None
         points = 0
         if question.started_at and is_correct:
             response_time_ms = int((timestamp - question.started_at).total_seconds() * 1000)
             points = quiz.points_per_correct
-            if quiz.speed_bonus:
-                # Speed bonus: up to 50% extra for answering in first 5 seconds
-                if response_time_ms < 5000:
-                    bonus = int(points * 0.5 * (1 - response_time_ms / 5000))
-                    points += bonus
+            if quiz.speed_bonus and response_time_ms < 5000:
+                bonus = int(points * 0.5 * (1 - response_time_ms / 5000))
+                points += bonus
 
         quiz_answer = QuizAnswer(
             quiz_id=quiz.id,

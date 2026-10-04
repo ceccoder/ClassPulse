@@ -36,6 +36,15 @@ export const sessionsApi = {
 
   stopPolling: (id: number) =>
     api.post(`/sessions/${id}/stop-polling`).then(r => r.data),
+
+  startMock: (id: number) =>
+    api.post(`/sessions/${id}/start-mock`).then(r => r.data),
+
+  stopMock: (id: number) =>
+    api.post(`/sessions/${id}/stop-mock`).then(r => r.data),
+
+  sendMockMessage: (id: number, text: string, author_name?: string) =>
+    api.post(`/sessions/${id}/send-mock-message`, { text, author_name: author_name || 'Test Student' }).then(r => r.data),
 };
 
 // ─── Polls ─────────────────────────────────────────────────────────────────────
@@ -43,6 +52,9 @@ export const sessionsApi = {
 export const pollsApi = {
   create: (data: Record<string, unknown>) =>
     api.post('/polls/', data).then(r => r.data),
+
+  update: (id: number, data: Record<string, unknown>) =>
+    api.put(`/polls/${id}`, data).then(r => r.data),
 
   getBySession: (sessionId: number) =>
     api.get(`/polls/session/${sessionId}`).then(r => r.data),

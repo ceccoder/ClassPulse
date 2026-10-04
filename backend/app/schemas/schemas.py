@@ -70,11 +70,15 @@ class PollCreate(BaseModel):
     question: str
     options: List[PollOptionCreate]
     allow_vote_change: bool = True
+    correct_keyword: Optional[str] = None
+    duration_seconds: Optional[int] = None
 
 class PollUpdate(BaseModel):
     question: Optional[str] = None
     status: Optional[str] = None
     allow_vote_change: Optional[bool] = None
+    correct_keyword: Optional[str] = None
+    duration_seconds: Optional[int] = None
 
 class PollOut(BaseModel):
     id: int
@@ -82,6 +86,8 @@ class PollOut(BaseModel):
     question: str
     status: str
     allow_vote_change: bool
+    correct_keyword: Optional[str] = None
+    duration_seconds: Optional[int] = None
     total_votes: int
     created_at: datetime
     started_at: Optional[datetime]

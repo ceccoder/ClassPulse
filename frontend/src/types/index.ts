@@ -47,6 +47,8 @@ export interface Poll {
   question: string;
   status: PollStatus;
   allow_vote_change: boolean;
+  correct_keyword?: string | null;
+  duration_seconds?: number | null;
   total_votes: number;
   created_at: string;
   started_at: string | null;
@@ -59,6 +61,8 @@ export interface CreatePollData {
   question: string;
   options: { text: string; keyword: string }[];
   allow_vote_change: boolean;
+  correct_keyword?: string | null;
+  duration_seconds?: number | null;
 }
 
 // ─── Quiz Types ────────────────────────────────────────────────────────────────
@@ -157,6 +161,7 @@ export interface SessionStats {
 // ─── WebSocket Event Types ─────────────────────────────────────────────────────
 
 export type WSEventType =
+  | 'chat_message'
   | 'poll_vote'
   | 'poll_started'
   | 'poll_paused'

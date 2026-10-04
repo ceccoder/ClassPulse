@@ -1,5 +1,5 @@
 """
-Reports router with CSV export.
+Reports router with CSV exports for Polls, Attendance, Leaderboard, and Session Summaries.
 """
 import csv
 import io
@@ -36,7 +36,7 @@ async def export_attendance_csv(session_id: int, db: AsyncSession = Depends(get_
         writer.writerow([
             r.student.display_name if r.student else "",
             r.student.channel_id if r.student else "",
-            r.marked_at.isoformat()
+            r.marked_at.isoformat() if r.marked_at else ""
         ])
 
     output.seek(0)
@@ -62,7 +62,7 @@ async def export_leaderboard_csv(session_id: int, db: AsyncSession = Depends(get
     for i, s in enumerate(students, 1):
         writer.writerow([
             i, s.display_name, s.score, s.quiz_score,
-            s.poll_participations, s.first_seen.isoformat()
+            s.poll_participations, s.first_seen.isoformat() if s.first_seen else ""
         ])
 
     output.seek(0)
@@ -85,12 +85,18 @@ async def export_polls_csv(session_id: int, db: AsyncSession = Depends(get_db)):
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Poll ID", "Question", "Status", "Option", "Keyword", "Votes", "Total Votes"])
+    writer.writerow([
+        "Poll ID", "Question", "Status", "Option Keyword", "Option Text",
+        "Votes", "Total Poll Votes", "Correct Answer Option", "Duration (Sec)"
+    ])
     for poll in polls:
         for opt in poll.options:
+            is_correct_option = (poll.correct_keyword and opt.keyword.upper() == poll.correct_keyword.upper())
             writer.writerow([
                 poll.id, poll.question, poll.status,
-                opt.text, opt.keyword, opt.vote_count, poll.total_votes
+                opt.keyword, opt.text, opt.vote_count, poll.total_votes,
+                "YES" if is_correct_option else ("NO" if poll.correct_keyword else "N/A"),
+                poll.duration_seconds or "Unlimited"
             ])
 
     output.seek(0)
@@ -117,7 +123,7 @@ async def export_quiz_csv(session_id: int, db: AsyncSession = Depends(get_db)):
         writer.writerow([
             student.display_name, answer.answer,
             answer.is_correct, answer.points_earned,
-            answer.response_time_ms, answer.answered_at.isoformat()
+            answer.response_time_ms, answer.answered_at.isoformat() if answer.answered_at else ""
         ])
 
     output.seek(0)
@@ -159,8 +165,8 @@ async def get_session_summary(session_id: int, db: AsyncSession = Depends(get_db
             "title": session.title,
             "platform": session.platform,
             "status": session.status,
-            "created_at": session.created_at.isoformat(),
-            "ended_at": session.ended_at.isoformat() if session.ended_at else None
+            "created_at": session.created_at.isoformat() if session.created_at else "",
+            "ended_at": session.ended_at.isoformat() if session and session.ended_at else None
         } if session else None,
         "student_count": len(students),
         "present_count": len(attendance),
@@ -171,7 +177,10 @@ async def get_session_summary(session_id: int, db: AsyncSession = Depends(get_db
         ],
         "polls": [
             {
+                "id": p.id,
                 "question": p.question,
+                "correct_keyword": p.correct_keyword,
+                "duration_seconds": p.duration_seconds,
                 "total_votes": p.total_votes,
                 "options": [
                     {"keyword": o.keyword, "text": o.text, "votes": o.vote_count}

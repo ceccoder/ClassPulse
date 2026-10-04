@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Users, CheckCircle, BarChart2, HelpCircle,
-  Hand, Plus, Play, Square, Wifi, Radio
+  Users, CheckCircle, BarChart2, Hand, Plus, Play, Pause, Square, RotateCcw,
+  Wifi, Radio, Zap, Check, HelpCircle, AlertCircle, Clock
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { sessionsApi, leaderboardApi, analyticsApi, pollsApi } from '@/services/api';
 import { useSessionStore, usePollStore } from '@/store';
 import { useWebSocket, useWSEvent } from '@/hooks/useWebSocket';
 import { formatDateTime, formatRelativeTime, POLL_COLORS, percentage, extractYouTubeVideoId } from '@/utils';
+import PollChart from '@/components/PollChart';
+import LiveChatFeed from '@/components/LiveChatFeed';
+import MockSimulatorControl from '@/components/MockSimulatorControl';
 import type { ClassSession } from '@/types';
 
 export default function Dashboard() {
@@ -21,6 +24,8 @@ export default function Dashboard() {
   const [liveStudents, setLiveStudents] = useState(0);
   const [presentCount, setPresentCount] = useState(0);
   const [handCount, setHandCount] = useState(0);
+  const [chartType, setChartType] = useState<'bar' | 'doughnut'>('bar');
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   // Connect WS
   useWebSocket(activeSession?.id ?? null);
@@ -38,24 +43,47 @@ export default function Dashboard() {
     refetchInterval: 3000,
   });
 
-  // Handle real-time updates
+  // Analytics query for RPM & overview
+  const { data: analyticsOverview } = useQuery({
+    queryKey: ['analytics-overview', activeSession?.id],
+    queryFn: () => activeSession ? analyticsApi.getOverview(activeSession.id) : null,
+    enabled: !!activeSession,
+    refetchInterval: 5000,
+  });
+
+  // Handle poll duration timer
+  useEffect(() => {
+    if (activePoll && activePoll.status === 'active' && activePoll.started_at && activePoll.duration_seconds) {
+      const startTime = new Date(activePoll.started_at).getTime();
+      const endTime = startTime + activePoll.duration_seconds * 1000;
+      
+      const interval = setInterval(() => {
+        const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+        setTimeLeft(remaining);
+        if (remaining === 0) {
+          clearInterval(interval);
+        }
+      }, 1000);
+      return () => clearInterval(interval);
+    } else {
+      setTimeLeft(null);
+    }
+  }, [activePoll]);
+
+  // Real-time WS events
   useWSEvent('new_student', () => {
     setLiveStudents(n => n + 1);
     queryClient.invalidateQueries({ queryKey: ['stats', activeSession?.id] });
   });
-  useWSEvent('attendance_marked', () => {
-    setPresentCount(n => n + 1);
-  });
-  useWSEvent('hand_raised', () => {
-    setHandCount(n => n + 1);
-  });
+  useWSEvent('attendance_marked', () => setPresentCount(n => n + 1));
+  useWSEvent('hand_raised', () => setHandCount(n => n + 1));
 
   // Stats query
   const { data: stats } = useQuery({
     queryKey: ['stats', activeSession?.id],
     queryFn: () => activeSession ? leaderboardApi.getStats(activeSession.id) : null,
     enabled: !!activeSession,
-    refetchInterval: 15000,
+    refetchInterval: 10000,
   });
 
   useEffect(() => {
@@ -65,6 +93,47 @@ export default function Dashboard() {
       setHandCount(stats.hand_raises || 0);
     }
   }, [stats]);
+
+  // Poll actions
+  const startPollMutation = useMutation({
+    mutationFn: (pollId: number) => pollsApi.start(pollId),
+    onSuccess: (data) => {
+      updatePoll(data);
+      toast.success('Poll started!');
+    }
+  });
+
+  const pausePollMutation = useMutation({
+    mutationFn: (pollId: number) => pollsApi.pause(pollId),
+    onSuccess: (data) => {
+      updatePoll(data);
+      toast.success('Poll paused.');
+    }
+  });
+
+  const resumePollMutation = useMutation({
+    mutationFn: (pollId: number) => pollsApi.resume(pollId),
+    onSuccess: (data) => {
+      updatePoll(data);
+      toast.success('Poll resumed.');
+    }
+  });
+
+  const endPollMutation = useMutation({
+    mutationFn: (pollId: number) => pollsApi.end(pollId),
+    onSuccess: (data) => {
+      updatePoll(data);
+      toast.success('Poll ended.');
+    }
+  });
+
+  const resetPollMutation = useMutation({
+    mutationFn: (pollId: number) => pollsApi.reset(pollId),
+    onSuccess: (data) => {
+      updatePoll(data);
+      toast.success('Poll reset.');
+    }
+  });
 
   // Create session
   const createSession = useMutation({
@@ -86,7 +155,7 @@ export default function Dashboard() {
           toast.success('Started polling YouTube Live chat!');
           setActiveSession({ ...session, is_polling: true });
         } catch (err: any) {
-          const detail = err?.response?.data?.detail || 'Failed to start polling YouTube Live chat. Ensure API key is configured.';
+          const detail = err?.response?.data?.detail || 'Configured stream ID. Set YouTube API key in settings to enable live polling.';
           toast.error(detail);
         }
       }
@@ -104,86 +173,67 @@ export default function Dashboard() {
       toast.success('Session ended');
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
-    onError: (error: any) => {
-      console.error('[EndSession] Error:', error);
-      if (error?.response?.status === 404) {
-        setActiveSession(null);
-        toast.success('Session state cleared (not found on server)');
-        queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      } else {
-        toast.error('Failed to end session. Check console for details.');
-      }
-    },
+    onError: () => {
+      setActiveSession(null);
+      toast.success('Session ended');
+    }
   });
 
-  // Start polling
+  // Start / Stop Polling
   const startPolling = useMutation({
     mutationFn: () => sessionsApi.startPolling(activeSession!.id),
     onSuccess: () => {
-      toast.success('YouTube polling started!');
-      if (activeSession) {
-        setActiveSession({ ...activeSession, is_polling: true });
-      }
-      queryClient.invalidateQueries({ queryKey: ['serverActiveSession'] });
+      toast.success('YouTube Live polling started!');
+      if (activeSession) setActiveSession({ ...activeSession, is_polling: true });
     },
     onError: (err: any) => {
-      const detail = err?.response?.data?.detail || 'Failed to start polling. Check YouTube API key and stream ID.';
+      const detail = err?.response?.data?.detail || 'Failed to start polling. Check API Key and Stream ID.';
       toast.error(detail);
     }
   });
 
-  // Stop polling
   const stopPolling = useMutation({
     mutationFn: () => sessionsApi.stopPolling(activeSession!.id),
     onSuccess: () => {
-      toast.success('YouTube polling stopped!');
-      if (activeSession) {
-        setActiveSession({ ...activeSession, is_polling: false });
-      }
-      queryClient.invalidateQueries({ queryKey: ['serverActiveSession'] });
+      toast.success('YouTube Live polling stopped.');
+      if (activeSession) setActiveSession({ ...activeSession, is_polling: false });
     },
-    onError: () => {
-      toast.error('Failed to stop polling.');
-    }
   });
 
-  // Verify active session status on load and sync it with server database
+  // Sync server active session
   const { data: serverActiveSession, isSuccess } = useQuery({
     queryKey: ['serverActiveSession'],
     queryFn: () => sessionsApi.getActive(),
-    refetchInterval: 20000, // check every 20 seconds
+    refetchInterval: 15000,
   });
 
   useEffect(() => {
     if (isSuccess) {
-      // Sync local Zustand state with what is actually on the server database
       if (serverActiveSession) {
         if (!activeSession || activeSession.id !== serverActiveSession.id) {
           setActiveSession(serverActiveSession);
-        }
-      } else {
-        if (activeSession) {
-          setActiveSession(null);
         }
       }
     }
   }, [serverActiveSession, isSuccess, activeSession, setActiveSession]);
 
+  const activePollSummary = analyticsOverview?.polls?.find((p: any) => p.id === activePoll?.id);
+
   const statCards = [
     {
-      label: 'Students', value: liveStudents, icon: Users,
+      label: 'Students Active', value: liveStudents, icon: Users,
       color: 'text-accent-cyan', bg: 'bg-accent-cyan/10', border: 'border-accent-cyan/20'
     },
     {
-      label: 'Present', value: presentCount, icon: CheckCircle,
+      label: 'Present (#present)', value: presentCount, icon: CheckCircle,
       color: 'text-accent-emerald', bg: 'bg-accent-emerald/10', border: 'border-accent-emerald/20'
     },
     {
-      label: 'Active Poll', value: activePoll ? '1' : '0', icon: BarChart2,
+      label: 'Total Votes Recorded', value: activePoll ? activePoll.total_votes : (analyticsOverview?.total_votes || 0), icon: BarChart2,
       color: 'text-brand-400', bg: 'bg-brand-600/10', border: 'border-brand-500/20'
     },
     {
-      label: 'Hand Raises', value: handCount, icon: Hand,
+      label: 'Responses / Min', value: activePollSummary?.responses_per_minute || 0, icon: Zap,
       color: 'text-accent-amber', bg: 'bg-accent-amber/10', border: 'border-accent-amber/20'
     },
   ];
@@ -191,16 +241,24 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-          <p className="text-surface-400 text-sm mt-1">
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            Classroom Live Dashboard
+            {activeSession?.is_polling && (
+              <span className="badge-active text-xs py-0.5">
+                <span className="live-dot mr-1" /> YouTube Live Active
+              </span>
+            )}
+          </h1>
+          <p className="text-surface-400 text-sm mt-0.5">
             {activeSession
-              ? `Managing: ${activeSession.title}`
-              : 'Start a new session to begin'}
+              ? `Session: ${activeSession.title}`
+              : 'Create or select a session to start collecting votes'}
           </p>
         </div>
-        <div className="flex gap-3">
+
+        <div className="flex flex-wrap items-center gap-3">
           {activeSession && (
             <>
               {activeSession.is_polling ? (
@@ -210,7 +268,7 @@ export default function Dashboard() {
                   disabled={stopPolling.isPending}
                 >
                   <Wifi size={16} className="animate-pulse" />
-                  Polling Live
+                  YouTube Polling Active
                 </button>
               ) : (
                 <button
@@ -219,28 +277,229 @@ export default function Dashboard() {
                   disabled={startPolling.isPending}
                 >
                   <Wifi size={16} className="opacity-50" />
-                  Start Polling
+                  Connect YouTube Chat
                 </button>
               )}
+
+              <button
+                onClick={() => endSession.mutate()}
+                className="btn-danger flex items-center gap-2"
+              >
+                <Square size={16} />
+                End Session
+              </button>
             </>
           )}
-          {activeSession ? (
-            <button
-              onClick={() => endSession.mutate()}
-              className="btn-danger flex items-center gap-2"
-            >
-              <Square size={16} />
-              End Session
-            </button>
-          ) : (
+
+          {!activeSession && (
             <button
               onClick={() => setShowNewSession(true)}
               className="btn-primary flex items-center gap-2"
             >
               <Plus size={16} />
-              New Session
+              New Live Class Session
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Mock Chat Simulator Control Panel */}
+      {activeSession && <MockSimulatorControl sessionId={activeSession.id} />}
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {statCards.map(({ label, value, icon: Icon, color, bg, border }) => (
+          <div key={label} className={`glass-card p-5 border ${border}`}>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-surface-400 text-xs font-semibold uppercase tracking-wider">{label}</span>
+              <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center`}>
+                <Icon size={18} className={color} />
+              </div>
+            </div>
+            <div className={`text-3xl font-bold ${color} number-roll tabular-nums`}>
+              {value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Main Content Grid: Live Poll & Chart + Live Chat Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Active Poll & Chart (7 cols) */}
+        <div className="lg:col-span-7 space-y-6">
+          <div className="glass-card p-6">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-surface-800">
+              <div className="flex items-center gap-2">
+                <BarChart2 size={20} className="text-brand-400" />
+                <h2 className="text-lg font-semibold text-white">Live Poll</h2>
+                {activePoll && (
+                  <span className={`px-2 py-0.5 text-xs font-semibold rounded ${
+                    activePoll.status === 'active' ? 'bg-accent-emerald/20 text-accent-emerald border border-accent-emerald/30' :
+                    activePoll.status === 'paused' ? 'bg-accent-amber/20 text-accent-amber border border-accent-amber/30' :
+                    'bg-surface-700 text-surface-300'
+                  }`}>
+                    {activePoll.status.toUpperCase()}
+                  </span>
+                )}
+              </div>
+
+              {/* Chart type toggle */}
+              {activePoll && (
+                <div className="flex items-center gap-1 bg-surface-800 p-1 rounded-lg border border-surface-700">
+                  <button
+                    onClick={() => setChartType('bar')}
+                    className={`px-2.5 py-1 text-xs rounded font-medium transition-colors ${
+                      chartType === 'bar' ? 'bg-brand-600 text-white' : 'text-surface-400 hover:text-white'
+                    }`}
+                  >
+                    Bar Chart
+                  </button>
+                  <button
+                    onClick={() => setChartType('doughnut')}
+                    className={`px-2.5 py-1 text-xs rounded font-medium transition-colors ${
+                      chartType === 'doughnut' ? 'bg-brand-600 text-white' : 'text-surface-400 hover:text-white'
+                    }`}
+                  >
+                    Doughnut
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {activePoll ? (
+              <div className="space-y-6">
+                {/* Question & Timer header */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-surface-900/60 p-4 rounded-xl border border-surface-800">
+                  <div>
+                    <h3 className="text-base font-bold text-white">{activePoll.question}</h3>
+                    {activePoll.correct_keyword && (
+                      <p className="text-xs text-accent-emerald font-medium mt-1 flex items-center gap-1">
+                        <Check size={14} /> Correct Answer Configured: Option {activePoll.correct_keyword}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Timer */}
+                  {timeLeft !== null && (
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-amber/10 border border-accent-amber/30 text-accent-amber font-mono font-bold text-sm whitespace-nowrap">
+                      <Clock size={16} />
+                      {timeLeft}s remaining
+                    </div>
+                  )}
+                </div>
+
+                {/* Chart Visualization */}
+                <PollChart
+                  options={activePoll.options}
+                  totalVotes={activePoll.total_votes}
+                  chartType={chartType}
+                  correctKeyword={activePoll.correct_keyword}
+                />
+
+                {/* Options Progress Bars */}
+                <div className="space-y-3 pt-2">
+                  {activePoll.options.map((opt, i) => {
+                    const pct = percentage(opt.vote_count, activePoll.total_votes);
+                    const isCorrect = activePoll.correct_keyword && opt.keyword.toUpperCase() === activePoll.correct_keyword.toUpperCase();
+
+                    return (
+                      <div key={opt.id} className="p-3 rounded-lg bg-surface-900/40 border border-surface-800">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="w-6 h-6 rounded text-xs font-bold flex items-center justify-center text-white"
+                              style={{ backgroundColor: isCorrect ? '#10b981' : POLL_COLORS[i % POLL_COLORS.length] }}
+                            >
+                              {opt.keyword}
+                            </span>
+                            <span className="text-sm font-medium text-surface-100">{opt.text}</span>
+                            {isCorrect && (
+                              <span className="text-[10px] bg-accent-emerald/20 text-accent-emerald px-1.5 py-0.5 rounded font-bold border border-accent-emerald/30">
+                                Correct Answer
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-sm font-bold text-white tabular-nums">
+                            {opt.vote_count} <span className="text-surface-500 font-normal">({pct}%)</span>
+                          </span>
+                        </div>
+                        <div className="h-2 bg-surface-800 rounded-full overflow-hidden">
+                          <div
+                            className="poll-bar h-full"
+                            style={{
+                              width: `${pct}%`,
+                              backgroundColor: isCorrect ? '#10b981' : POLL_COLORS[i % POLL_COLORS.length]
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Poll Controls Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-surface-800">
+                  <div className="text-xs text-surface-400">
+                    Total Votes: <strong className="text-white">{activePoll.total_votes}</strong>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {activePoll.status === 'active' && (
+                      <button
+                        onClick={() => pausePollMutation.mutate(activePoll.id)}
+                        className="btn-secondary text-xs flex items-center gap-1.5"
+                      >
+                        <Pause size={14} /> Pause
+                      </button>
+                    )}
+                    {activePoll.status === 'paused' && (
+                      <button
+                        onClick={() => resumePollMutation.mutate(activePoll.id)}
+                        className="btn-primary text-xs flex items-center gap-1.5"
+                      >
+                        <Play size={14} /> Resume
+                      </button>
+                    )}
+                    {activePoll.status === 'draft' && (
+                      <button
+                        onClick={() => startPollMutation.mutate(activePoll.id)}
+                        className="btn-primary text-xs flex items-center gap-1.5"
+                      >
+                        <Play size={14} /> Start Poll
+                      </button>
+                    )}
+                    {(activePoll.status === 'active' || activePoll.status === 'paused') && (
+                      <button
+                        onClick={() => endPollMutation.mutate(activePoll.id)}
+                        className="btn-danger text-xs flex items-center gap-1.5"
+                      >
+                        <Square size={14} /> End Poll
+                      </button>
+                    )}
+                    <button
+                      onClick={() => resetPollMutation.mutate(activePoll.id)}
+                      className="btn-secondary text-xs flex items-center gap-1.5"
+                    >
+                      <RotateCcw size={14} /> Reset
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 text-surface-500">
+                <BarChart2 size={40} className="mx-auto mb-3 opacity-30 text-brand-400" />
+                <p className="text-base font-medium text-surface-300">No poll currently active</p>
+                <p className="text-xs mt-1 text-surface-500 max-w-sm mx-auto">
+                  Create a new poll in the Polls section or activate an existing poll to start receiving live student votes.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Live Chat & Detected Responses (5 cols) */}
+        <div className="lg:col-span-5">
+          <LiveChatFeed />
         </div>
       </div>
 
@@ -254,22 +513,19 @@ export default function Dashboard() {
                 <label className="text-sm text-surface-400 mb-1 block">Session Title</label>
                 <input
                   className="input"
-                  placeholder="e.g., Week 3 - JavaScript Basics"
+                  placeholder="e.g., Physics Live Lecture 4"
                   value={newTitle}
                   onChange={e => setNewTitle(e.target.value)}
                 />
               </div>
               <div>
-                <label className="text-sm text-surface-400 mb-1 block">YouTube Video ID (optional)</label>
+                <label className="text-sm text-surface-400 mb-1 block">YouTube Video URL or ID (optional)</label>
                 <input
                   className="input font-mono"
-                  placeholder="e.g., dQw4w9WgXcQ"
+                  placeholder="e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                   value={newStreamId}
                   onChange={e => setNewStreamId(e.target.value)}
                 />
-                <p className="text-xs text-surface-500 mt-1">
-                  From your YouTube live stream URL: youtube.com/watch?v=<strong>VIDEO_ID</strong>
-                </p>
               </div>
             </div>
             <div className="flex gap-3">
@@ -286,170 +542,6 @@ export default function Dashboard() {
               >
                 Cancel
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map(({ label, value, icon: Icon, color, bg, border }) => (
-          <div key={label} className={`glass-card p-5 border ${border}`}>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-surface-400 text-sm font-medium">{label}</span>
-              <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center`}>
-                <Icon size={18} className={color} />
-              </div>
-            </div>
-            <div className={`text-3xl font-bold ${color} number-roll tabular-nums`}>
-              {value}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Main content grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Active Poll */}
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="section-title flex items-center gap-2">
-              <BarChart2 size={18} className="text-brand-400" />
-              Active Poll
-            </h2>
-            {activePoll && (
-              <span className="badge-active">
-                <span className="live-dot mr-1.5" />
-                Live
-              </span>
-            )}
-          </div>
-
-          {activePoll ? (
-            <div className="space-y-4">
-              <p className="text-white font-medium">{activePoll.question}</p>
-              <div className="space-y-3">
-                {activePoll.options.map((opt, i) => {
-                  const pct = percentage(opt.vote_count, activePoll.total_votes);
-                  return (
-                    <div key={opt.id}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="w-6 h-6 rounded text-xs font-bold flex items-center justify-center text-white"
-                            style={{ backgroundColor: POLL_COLORS[i % POLL_COLORS.length] }}
-                          >
-                            {opt.keyword}
-                          </span>
-                          <span className="text-sm text-surface-200">{opt.text}</span>
-                        </div>
-                        <span className="text-sm font-semibold text-white tabular-nums">
-                          {opt.vote_count} <span className="text-surface-500 font-normal">({pct}%)</span>
-                        </span>
-                      </div>
-                      <div className="h-2 bg-surface-700/60 rounded-full overflow-hidden">
-                        <div
-                          className="poll-bar h-full"
-                          style={{
-                            width: `${pct}%`,
-                            backgroundColor: POLL_COLORS[i % POLL_COLORS.length]
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-surface-500 text-right">
-                {activePoll.total_votes} total votes
-              </p>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-surface-500">
-              <BarChart2 size={32} className="mx-auto mb-2 opacity-30" />
-              <p className="text-sm">No active poll</p>
-              <p className="text-xs mt-1">Go to Polls to create one</p>
-            </div>
-          )}
-        </div>
-
-        {/* Top Students */}
-        <div className="glass-card p-5">
-          <h2 className="section-title flex items-center gap-2 mb-4">
-            <Users size={18} className="text-accent-violet" />
-            Top Students
-          </h2>
-          {stats?.top_students?.length ? (
-            <div className="space-y-2">
-              {stats.top_students.map((student: {
-                id: number; name: string; score: number;
-                quiz_score: number; avatar_url: string | null
-              }, i: number) => (
-                <div key={student.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-surface-800/40 transition-colors">
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-                    i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'bg-surface-700 text-surface-300'
-                  }`}>
-                    {i + 1}
-                  </div>
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-accent-violet flex items-center justify-center text-sm font-bold flex-shrink-0">
-                    {student.name[0]?.toUpperCase()}
-                  </div>
-                  <span className="flex-1 text-sm text-surface-200 truncate">{student.name}</span>
-                  <div className="flex items-center gap-3 text-right">
-                    <div>
-                      <div className="text-sm font-bold text-brand-400 tabular-nums">{student.score}</div>
-                      <div className="text-xs text-surface-500">pts</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-surface-500">
-              <Users size={32} className="mx-auto mb-2 opacity-30" />
-              <p className="text-sm">No students yet</p>
-              <p className="text-xs mt-1">Students appear when they chat</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Session Info */}
-      {activeSession && (
-        <div className="glass-card p-5">
-          <h2 className="section-title mb-4">Session Info</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <div className="text-surface-500 mb-1">Platform</div>
-              <div className="text-white capitalize flex items-center gap-1.5">
-                <Radio size={14} className="text-accent-rose" />
-                {activeSession.platform}
-              </div>
-            </div>
-            <div>
-              <div className="text-surface-500 mb-1">Started</div>
-              <div className="text-white">{formatRelativeTime(activeSession.created_at)}</div>
-            </div>
-            <div>
-              <div className="text-surface-500 mb-1">Stream ID</div>
-              <div className="text-white font-mono text-xs truncate">
-                {activeSession.stream_id || '—'}
-              </div>
-            </div>
-            <div>
-              <div className="text-surface-500 mb-1">Status</div>
-              <div className="flex items-center gap-2">
-                <span className="badge-active">Active</span>
-                {activeSession.is_polling ? (
-                  <span className="text-accent-emerald text-xs flex items-center gap-1 bg-accent-emerald/10 px-2 py-0.5 rounded border border-accent-emerald/20">
-                    <span className="live-dot" /> Polling Live
-                  </span>
-                ) : (
-                  <span className="text-surface-400 text-xs flex items-center gap-1 bg-surface-800 px-2 py-0.5 rounded border border-surface-700">
-                    Polling Idle
-                  </span>
-                )}
-              </div>
             </div>
           </div>
         </div>

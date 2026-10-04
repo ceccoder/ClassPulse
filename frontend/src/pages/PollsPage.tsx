@@ -1,16 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Plus, Play, Pause, RotateCcw, StopCircle, Trash2,
-  BarChart2, ChevronDown, ChevronUp, Clock
+  Plus, Play, Pause, RotateCcw, StopCircle, Trash2, Edit, Download,
+  BarChart2, ChevronDown, ChevronUp, Clock, Check, HelpCircle
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import {
   Chart as ChartJS, ArcElement, Tooltip, Legend,
   CategoryScale, LinearScale, BarElement
 } from 'chart.js';
-import { Bar, Doughnut } from 'react-chartjs-2';
-import { pollsApi } from '@/services/api';
+import { Bar } from 'react-chartjs-2';
+import { pollsApi, reportsApi } from '@/services/api';
 import { useSessionStore, usePollStore } from '@/store';
 import { useWSEvent } from '@/hooks/useWebSocket';
 import { POLL_COLORS, percentage } from '@/utils';
@@ -30,19 +30,21 @@ export default function PollsPage() {
   const activeSession = useSessionStore(s => s.activeSession);
   const { polls, setPolls, updatePoll, activePoll } = usePollStore();
   const [showCreate, setShowCreate] = useState(false);
+  const [editingPollId, setEditingPollId] = useState<number | null>(null);
   const [expandedPoll, setExpandedPoll] = useState<number | null>(null);
 
   // Poll form state
   const [question, setQuestion] = useState('');
   const [allowChange, setAllowChange] = useState(true);
-  const [timerSeconds, setTimerSeconds] = useState<number>(30); // Default 30s timer
+  const [correctKeyword, setCorrectKeyword] = useState<string>('');
+  const [durationSeconds, setDurationSeconds] = useState<number | null>(30);
   const [options, setOptions] = useState(DEFAULT_4_OPTIONS);
 
   // Active poll live countdown state
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   // WS live updates
-  useWSEvent('poll_vote', (data) => {
+  useWSEvent('poll_vote', () => {
     queryClient.invalidateQueries({ queryKey: ['polls', activeSession?.id] });
   });
 
@@ -55,86 +57,75 @@ export default function PollsPage() {
       return data;
     },
     enabled: !!activeSession,
-    refetchInterval: 5000,
+    refetchInterval: 3000,
   });
 
-  const createPoll = useMutation({
-    mutationFn: () => pollsApi.create({
-      session_id: activeSession!.id,
-      question: question.trim() || 'Quick Poll (A/B/C/D)',
-      options: options.map(o => ({ ...o, text: o.text.trim() || `Option ${o.keyword}` })),
-      allow_vote_change: allowChange,
-    }),
-    onSuccess: async (poll: Poll) => {
-      toast.success('Poll created & launched!');
-      setShowCreate(false);
-      setQuestion('');
-      setOptions(DEFAULT_4_OPTIONS);
-      
-      // Auto-start poll so it transitions from draft to active immediately
-      await pollsApi.start(poll.id);
-      if (timerSeconds > 0) {
-        setTimeLeft(timerSeconds);
+  const savePoll = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        session_id: activeSession!.id,
+        question: question.trim() || 'Quick Poll (A/B/C/D)',
+        options: options.map(o => ({ ...o, text: o.text.trim() || `Option ${o.keyword}` })),
+        allow_vote_change: allowChange,
+        correct_keyword: correctKeyword || null,
+        duration_seconds: durationSeconds || null,
+      };
+
+      if (editingPollId) {
+        return pollsApi.update(editingPollId, payload);
+      } else {
+        return pollsApi.create(payload);
       }
+    },
+    onSuccess: async (poll: Poll) => {
+      toast.success(editingPollId ? 'Poll updated!' : 'Poll created!');
+      setShowCreate(false);
+      setEditingPollId(null);
+      resetForm();
       queryClient.invalidateQueries({ queryKey: ['polls', activeSession?.id] });
     },
-    onError: () => toast.error('Failed to create poll'),
+    onError: () => toast.error('Failed to save poll'),
   });
 
-  // Auto-end poll timer countdown logic
-  useEffect(() => {
-    if (!activePoll || activePoll.status !== 'active' || timeLeft === null) return;
-
-    if (timeLeft <= 0) {
-      pollsApi.end(activePoll.id).then(() => {
-        toast.success('Poll timer ended!');
-        setTimeLeft(null);
-        queryClient.invalidateQueries({ queryKey: ['polls', activeSession?.id] });
-      });
-      return;
-    }
-
-    const timer = setInterval(() => {
-      setTimeLeft(prev => (prev !== null && prev > 0 ? prev - 1 : 0));
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [activePoll, timeLeft]);
+  const resetForm = () => {
+    setQuestion('');
+    setAllowChange(true);
+    setCorrectKeyword('');
+    setDurationSeconds(30);
+    setOptions(DEFAULT_4_OPTIONS);
+  };
 
   const handleOpenCreateModal = () => {
-    setQuestion('');
-    setOptions(DEFAULT_4_OPTIONS);
+    setEditingPollId(null);
+    resetForm();
     setShowCreate(true);
   };
 
-  const mutate = (fn: () => Promise<Poll>, successMsg: string) =>
-    useMutation({
-      mutationFn: fn,
-      onSuccess: (poll) => {
-        updatePoll(poll);
-        toast.success(successMsg);
-        queryClient.invalidateQueries({ queryKey: ['polls', activeSession?.id] });
-      },
-      onError: () => toast.error('Operation failed'),
-    });
+  const handleEditPoll = (poll: Poll) => {
+    setEditingPollId(poll.id);
+    setQuestion(poll.question);
+    setAllowChange(poll.allow_vote_change);
+    setCorrectKeyword(poll.correct_keyword || '');
+    setDurationSeconds(poll.duration_seconds || null);
+    setOptions(poll.options.map(o => ({ text: o.text, keyword: o.keyword })));
+    setShowCreate(true);
+  };
 
   const addOption = () => {
+    if (options.length >= 6) {
+      toast.error('Maximum 6 options allowed.');
+      return;
+    }
     const next = String.fromCharCode(65 + options.length);
     setOptions([...options, { text: '', keyword: next }]);
   };
 
   const removeOption = (i: number) => {
-    if (options.length <= 2) return;
-    setOptions(options.filter((_, idx) => idx !== i));
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'active': return <span className="badge-active"><span className="live-dot mr-1.5" />Live</span>;
-      case 'paused': return <span className="badge-paused">Paused</span>;
-      case 'ended': return <span className="badge-ended">Ended</span>;
-      default: return <span className="badge-draft">Draft</span>;
+    if (options.length <= 2) {
+      toast.error('Minimum 2 options required.');
+      return;
     }
+    setOptions(options.filter((_, idx) => idx !== i));
   };
 
   if (!activeSession) {
@@ -152,62 +143,94 @@ export default function PollsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Polls</h1>
+          <h1 className="text-2xl font-bold text-white">Poll Management</h1>
           <p className="text-surface-400 text-sm mt-1">
-            {polls.length} polls · {activePoll ? '1 live' : 'none live'}
+            {polls.length} total polls · {activePoll ? '1 currently active' : 'none active'}
           </p>
         </div>
-        <button onClick={handleOpenCreateModal} className="btn-primary flex items-center gap-2">
-          <Plus size={16} />
-          New Quick Poll
-        </button>
+        <div className="flex gap-3">
+          <a
+            href={reportsApi.exportPollsCsv(activeSession.id)}
+            download
+            className="btn-secondary flex items-center gap-2 text-xs"
+          >
+            <Download size={14} />
+            Export Polls CSV
+          </a>
+          <button onClick={handleOpenCreateModal} className="btn-primary flex items-center gap-2">
+            <Plus size={16} />
+            Create Poll
+          </button>
+        </div>
       </div>
 
-      {/* Create Poll Modal */}
+      {/* Create / Edit Poll Modal */}
       {showCreate && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="glass-card p-6 w-full max-w-lg space-y-4 animate-slide-up max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-semibold text-white">Create Quick Poll</h2>
+            <h2 className="text-lg font-semibold text-white">
+              {editingPollId ? 'Edit Poll' : 'Create Poll'}
+            </h2>
 
             <div>
-              <label className="text-sm text-surface-400 mb-1 block">Question (Optional)</label>
+              <label className="text-sm text-surface-400 mb-1 block">Poll Question</label>
               <input
                 className="input"
-                placeholder="Ask your students (or leave blank for standard A/B/C/D)..."
+                placeholder="What is the answer to question 1?"
                 value={question}
                 onChange={e => setQuestion(e.target.value)}
               />
             </div>
 
-            {/* Timer Presets */}
-            <div>
-              <label className="text-sm text-surface-400 mb-2 flex items-center gap-1.5 block">
-                <Clock size={14} className="text-brand-400" /> Poll Timer (Auto-End)
-              </label>
-              <div className="grid grid-cols-4 gap-2">
-                {[15, 30, 60, 0].map((sec) => (
-                  <button
-                    key={sec}
-                    type="button"
-                    onClick={() => setTimerSeconds(sec)}
-                    className={`py-2 px-3 rounded-lg text-xs font-semibold border transition-all ${
-                      timerSeconds === sec
-                        ? 'bg-brand-500/20 border-brand-500 text-brand-300'
-                        : 'bg-surface-800/40 border-surface-700/50 text-surface-400 hover:text-white'
-                    }`}
-                  >
-                    {sec === 0 ? 'No Timer' : `${sec}s Timer`}
-                  </button>
-                ))}
+            {/* Duration Dropdown */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm text-surface-400 mb-1 flex items-center gap-1.5 block">
+                  <Clock size={14} className="text-brand-400" /> Duration Timer
+                </label>
+                <select
+                  value={durationSeconds ?? ''}
+                  onChange={e => setDurationSeconds(e.target.value ? Number(e.target.value) : null)}
+                  className="input text-xs"
+                >
+                  <option value="">No Duration (Manual End)</option>
+                  <option value="15">15 Seconds</option>
+                  <option value="30">30 Seconds</option>
+                  <option value="60">60 Seconds (1 Min)</option>
+                  <option value="120">120 Seconds (2 Mins)</option>
+                  <option value="300">300 Seconds (5 Mins)</option>
+                </select>
+              </div>
+
+              {/* Correct Answer Dropdown */}
+              <div>
+                <label className="text-sm text-surface-400 mb-1 flex items-center gap-1.5 block">
+                  <Check size={14} className="text-accent-emerald" /> Correct Answer (Optional)
+                </label>
+                <select
+                  value={correctKeyword}
+                  onChange={e => setCorrectKeyword(e.target.value)}
+                  className="input text-xs"
+                >
+                  <option value="">None (Survey / Opinion)</option>
+                  {options.map(opt => (
+                    <option key={opt.keyword} value={opt.keyword}>
+                      Option {opt.keyword} ({opt.text || `Option ${opt.keyword}`})
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
+            {/* Options List (2 to 6 options) */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm text-surface-400">Options (Auto A, B, C, D)</label>
-                <button onClick={addOption} className="text-xs text-brand-400 hover:text-brand-300">
-                  + Add option
-                </button>
+                <label className="text-sm text-surface-400">Poll Options (2-6 options)</label>
+                {options.length < 6 && (
+                  <button onClick={addOption} className="text-xs text-brand-400 hover:text-brand-300 font-medium">
+                    + Add Option
+                  </button>
+                )}
               </div>
               <div className="space-y-2">
                 {options.map((opt, i) => (
@@ -219,7 +242,7 @@ export default function PollsPage() {
                       {opt.keyword}
                     </div>
                     <input
-                      className="input flex-1"
+                      className="input flex-1 text-xs"
                       placeholder={`Option ${opt.keyword}`}
                       value={opt.text}
                       onChange={e => {
@@ -238,23 +261,23 @@ export default function PollsPage() {
               </div>
             </div>
 
-            <label className="flex items-center gap-2 cursor-pointer">
+            <label className="flex items-center gap-2 cursor-pointer pt-1">
               <input
                 type="checkbox"
                 checked={allowChange}
                 onChange={e => setAllowChange(e.target.checked)}
                 className="rounded"
               />
-              <span className="text-sm text-surface-300">Allow vote changes</span>
+              <span className="text-xs text-surface-300">Allow students to change vote during active poll</span>
             </label>
 
-            <div className="flex gap-3 pt-2">
+            <div className="flex gap-3 pt-3">
               <button
-                onClick={() => createPoll.mutate()}
+                onClick={() => savePoll.mutate()}
                 className="btn-primary flex-1 py-2.5 font-semibold text-sm"
-                disabled={createPoll.isPending}
+                disabled={savePoll.isPending}
               >
-                {createPoll.isPending ? 'Launching...' : `Create & Launch (${timerSeconds ? timerSeconds + 's' : 'Manual'})`}
+                {savePoll.isPending ? 'Saving...' : (editingPollId ? 'Save Changes' : 'Create Poll')}
               </button>
               <button onClick={() => setShowCreate(false)} className="btn-secondary">
                 Cancel
@@ -269,17 +292,17 @@ export default function PollsPage() {
         {polls.length === 0 ? (
           <div className="glass-card p-12 text-center text-surface-500">
             <BarChart2 size={40} className="mx-auto mb-3 opacity-30" />
-            <p className="text-surface-300 font-medium mb-1">No polls yet</p>
-            <p className="text-sm">Create your first poll to engage students</p>
+            <p className="text-surface-300 font-medium mb-1">No polls created yet</p>
+            <p className="text-sm">Click Create Poll above to start</p>
           </div>
         ) : (
           polls.map(poll => (
-            <PollCard
+            <PollCardItem
               key={poll.id}
               poll={poll}
-              timeLeft={poll.status === 'active' ? timeLeft : null}
               expanded={expandedPoll === poll.id}
               onToggle={() => setExpandedPoll(expandedPoll === poll.id ? null : poll.id)}
+              onEdit={() => handleEditPoll(poll)}
               onUpdate={() => queryClient.invalidateQueries({ queryKey: ['polls', activeSession?.id] })}
             />
           ))
@@ -289,16 +312,13 @@ export default function PollsPage() {
   );
 }
 
-function PollCard({ poll, timeLeft, expanded, onToggle, onUpdate }: {
+function PollCardItem({ poll, expanded, onToggle, onEdit, onUpdate }: {
   poll: Poll;
-  timeLeft: number | null;
   expanded: boolean;
   onToggle: () => void;
+  onEdit: () => void;
   onUpdate: () => void;
 }) {
-  const queryClient = useQueryClient();
-
-  // Load voter details when expanded
   const { data: voters = [] } = useQuery({
     queryKey: ['poll-voters', poll.id],
     queryFn: () => pollsApi.getVoters(poll.id),
@@ -316,44 +336,9 @@ function PollCard({ poll, timeLeft, expanded, onToggle, onUpdate }: {
     }
   };
 
-  const chartData = {
-    labels: poll.options.map(o => `${o.keyword}: ${o.text}`),
-    datasets: [{
-      data: poll.options.map(o => o.vote_count),
-      backgroundColor: poll.options.map((_, i) => POLL_COLORS[i % POLL_COLORS.length] + 'cc'),
-      borderColor: poll.options.map((_, i) => POLL_COLORS[i % POLL_COLORS.length]),
-      borderWidth: 1,
-    }]
-  };
-
-  const barData = {
-    labels: poll.options.map(o => o.keyword),
-    datasets: [{
-      data: poll.options.map(o => o.vote_count),
-      backgroundColor: poll.options.map((_, i) => POLL_COLORS[i % POLL_COLORS.length] + 'aa'),
-      borderColor: poll.options.map((_, i) => POLL_COLORS[i % POLL_COLORS.length]),
-      borderWidth: 2,
-      borderRadius: 6,
-    }]
-  };
-
-  const chartOptions = {
-    responsive: true,
-    plugins: {
-      legend: { display: false },
-    },
-    scales: {
-      x: { ticks: { color: '#9aa3bf' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-      y: {
-        ticks: { color: '#9aa3bf', stepSize: 1 },
-        grid: { color: 'rgba(255,255,255,0.05)' }
-      }
-    }
-  };
-
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'active': return <span className="badge-active"><span className="live-dot mr-1.5" />Live</span>;
+      case 'active': return <span className="badge-active"><span className="live-dot mr-1.5" />Active</span>;
       case 'paused': return <span className="badge-paused">Paused</span>;
       case 'ended': return <span className="badge-ended">Ended</span>;
       default: return <span className="badge-draft">Draft</span>;
@@ -361,150 +346,159 @@ function PollCard({ poll, timeLeft, expanded, onToggle, onUpdate }: {
   };
 
   return (
-    <div className={`glass-card transition-all duration-200 ${poll.status === 'active' ? 'border-brand-500/30 border-glow' : ''}`}>
-      {/* Poll header */}
-      <div className="p-4 flex items-center gap-4">
+    <div className={`glass-card transition-all duration-200 ${poll.status === 'active' ? 'border-brand-500/40 border-glow' : ''}`}>
+      <div className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1.5">
             {getStatusBadge(poll.status)}
-            {poll.status === 'active' && timeLeft !== null && (
-              <span
-                key={timeLeft}
-                className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold border flex items-center gap-1.5 transition-all animate-timer-pop ${
-                  timeLeft <= 5
-                    ? 'bg-rose-500/30 text-rose-300 border-rose-500/50 animate-warning-pulse shadow-lg shadow-rose-900/40'
-                    : timeLeft <= 10
-                    ? 'bg-amber-500/30 text-amber-300 border-amber-500/50 shadow-md shadow-amber-900/30'
-                    : 'bg-brand-500/20 text-brand-300 border-brand-500/40'
-                }`}
-              >
-                <Clock size={12} className={timeLeft <= 5 ? 'text-rose-400 animate-spin' : 'text-brand-400'} />
-                <span>{timeLeft}s</span>
+            {poll.correct_keyword && (
+              <span className="text-[11px] px-2 py-0.5 rounded bg-accent-emerald/20 text-accent-emerald border border-accent-emerald/30 font-semibold">
+                Correct: {poll.correct_keyword}
               </span>
             )}
-            <span className="text-xs text-surface-500">{poll.total_votes} votes</span>
+            {poll.duration_seconds && (
+              <span className="text-[11px] px-2 py-0.5 rounded bg-surface-800 text-surface-400 border border-surface-700 font-mono">
+                {poll.duration_seconds}s
+              </span>
+            )}
+            <span className="text-xs text-surface-500">{poll.total_votes} votes total</span>
           </div>
-          <p className="text-white font-medium truncate">{poll.question}</p>
-          <p className="text-xs text-surface-500 mt-1">{poll.options.length} options</p>
+
+          <h3 className="text-base font-semibold text-white">{poll.question}</h3>
+          <p className="text-xs text-surface-400 mt-1">
+            {poll.options.map(o => `${o.keyword}: ${o.text}`).join(' · ')}
+          </p>
         </div>
 
-        {/* Actions */}
         <div className="flex items-center gap-2 flex-shrink-0">
           {poll.status === 'draft' && (
-            <button
-              onClick={action(() => pollsApi.start(poll.id), 'Poll started!')}
-              className="btn-success flex items-center gap-1.5 text-xs px-3 py-1.5"
-            >
-              <Play size={12} /> Start
-            </button>
+            <>
+              <button
+                onClick={onEdit}
+                className="btn-secondary text-xs flex items-center gap-1 px-2.5 py-1.5"
+                title="Edit Poll"
+              >
+                <Edit size={12} /> Edit
+              </button>
+              <button
+                onClick={action(() => pollsApi.start(poll.id), 'Poll started!')}
+                className="btn-primary text-xs flex items-center gap-1.5 px-3 py-1.5"
+              >
+                <Play size={12} /> Start
+              </button>
+            </>
           )}
+
           {poll.status === 'active' && (
             <>
               <button
                 onClick={action(() => pollsApi.pause(poll.id), 'Poll paused')}
-                className="btn-secondary flex items-center gap-1.5 text-xs px-3 py-1.5"
+                className="btn-secondary text-xs flex items-center gap-1.5 px-3 py-1.5"
               >
                 <Pause size={12} /> Pause
               </button>
               <button
                 onClick={action(() => pollsApi.end(poll.id), 'Poll ended')}
-                className="btn-danger flex items-center gap-1.5 text-xs px-3 py-1.5"
+                className="btn-danger text-xs flex items-center gap-1.5 px-3 py-1.5"
               >
                 <StopCircle size={12} /> End
               </button>
             </>
           )}
+
           {poll.status === 'paused' && (
             <>
               <button
                 onClick={action(() => pollsApi.resume(poll.id), 'Poll resumed!')}
-                className="btn-success flex items-center gap-1.5 text-xs px-3 py-1.5"
+                className="btn-primary text-xs flex items-center gap-1.5 px-3 py-1.5"
               >
                 <Play size={12} /> Resume
               </button>
               <button
                 onClick={action(() => pollsApi.end(poll.id), 'Poll ended')}
-                className="btn-danger flex items-center gap-1.5 text-xs px-3 py-1.5"
+                className="btn-danger text-xs flex items-center gap-1.5 px-3 py-1.5"
               >
                 <StopCircle size={12} /> End
               </button>
             </>
           )}
+
           {(poll.status === 'ended' || poll.status === 'draft') && (
             <button
               onClick={action(() => pollsApi.reset(poll.id), 'Poll reset')}
               className="btn-icon"
-              title="Reset"
+              title="Reset Poll Votes"
             >
               <RotateCcw size={14} />
             </button>
           )}
+
           <button
             onClick={async () => {
               await pollsApi.delete(poll.id);
               onUpdate();
+              toast.success('Poll deleted');
             }}
-            className="btn-icon text-accent-rose"
+            className="btn-icon text-accent-rose hover:bg-accent-rose/10"
+            title="Delete Poll"
           >
             <Trash2 size={14} />
           </button>
+
           <button onClick={onToggle} className="btn-icon">
             {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </button>
         </div>
       </div>
 
-      {/* Expanded: Results */}
       {expanded && (
-        <div className="border-t border-surface-800/60 p-4 space-y-4 animate-fade-in">
-          {/* Bar chart */}
-          <div className="max-h-48">
-            <Bar data={barData} options={chartOptions as never} />
-          </div>
-
-          {/* Options with bars and voter details */}
+        <div className="border-t border-surface-800 p-4 space-y-4 animate-fade-in">
           <div className="space-y-3">
             {poll.options.map((opt, i) => {
               const pct = percentage(opt.vote_count, poll.total_votes);
+              const isCorrect = poll.correct_keyword && opt.keyword.toUpperCase() === poll.correct_keyword.toUpperCase();
               const optionVoters = voters.filter(v => v.option_id === opt.id);
 
               return (
-                <div key={opt.id} className="bg-surface-900/60 p-2.5 rounded-lg border border-surface-800/80 space-y-2">
-                  <div className="flex items-center justify-between">
+                <div key={opt.id} className="bg-surface-900/60 p-3 rounded-lg border border-surface-800">
+                  <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-2">
                       <span
                         className="w-6 h-6 rounded text-xs font-bold flex items-center justify-center text-white"
-                        style={{ backgroundColor: POLL_COLORS[i % POLL_COLORS.length] }}
+                        style={{ backgroundColor: isCorrect ? '#10b981' : POLL_COLORS[i % POLL_COLORS.length] }}
                       >
                         {opt.keyword}
                       </span>
                       <span className="text-sm font-medium text-surface-200">{opt.text}</span>
+                      {isCorrect && (
+                        <span className="text-[10px] bg-accent-emerald/20 text-accent-emerald px-1.5 py-0.5 rounded font-bold border border-accent-emerald/30">
+                          Correct Answer
+                        </span>
+                      )}
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-semibold text-white tabular-nums">
-                        {opt.vote_count} ({pct}%)
-                      </span>
-                    </div>
+                    <span className="text-xs font-semibold text-white tabular-nums">
+                      {opt.vote_count} votes ({pct}%)
+                    </span>
                   </div>
 
-                  {/* Progress Bar */}
-                  <div className="h-2 bg-surface-800/90 rounded-full overflow-hidden">
+                  <div className="h-2 bg-surface-800 rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full transition-all duration-700"
-                      style={{ width: `${pct}%`, backgroundColor: POLL_COLORS[i % POLL_COLORS.length] }}
+                      style={{
+                        width: `${pct}%`,
+                        backgroundColor: isCorrect ? '#10b981' : POLL_COLORS[i % POLL_COLORS.length]
+                      }}
                     />
                   </div>
 
-                  {/* Voter Badges List */}
                   {optionVoters.length > 0 && (
-                    <div className="pt-1.5 border-t border-surface-800/50 flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] text-surface-400 font-medium mr-1">Voters:</span>
+                    <div className="pt-2 mt-2 border-t border-surface-800 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-surface-400 font-medium">Voters:</span>
                       {optionVoters.map((v) => (
                         <span
                           key={v.vote_id}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-800/80 border border-surface-700/60 text-[11px] font-semibold text-brand-300 shadow-sm"
+                          className="px-2 py-0.5 rounded bg-surface-800 text-[11px] text-brand-300 border border-surface-700"
                         >
-                          <span className="w-1.5 h-1.5 rounded-full bg-brand-400" />
                           {v.student_name}
                         </span>
                       ))}
