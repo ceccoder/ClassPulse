@@ -57,9 +57,10 @@ async def health_check():
 # Serve frontend static build if dist folder exists
 import os
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
+
 if os.path.exists(frontend_dist):
     assets_dir = os.path.join(frontend_dist, "assets")
     if os.path.exists(assets_dir):
@@ -67,7 +68,18 @@ if os.path.exists(frontend_dist):
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
+        if full_path.startswith("api/") or full_path.startswith("ws"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
         file_path = os.path.join(frontend_dist, full_path)
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(os.path.join(frontend_dist, "index.html"))
+else:
+    @app.get("/")
+    async def root_fallback():
+        return JSONResponse({
+            "service": "ClassPulse API",
+            "status": "healthy",
+            "docs": "/docs",
+            "api_health": "/api/health"
+        })
