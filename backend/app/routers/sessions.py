@@ -116,12 +116,13 @@ async def start_polling(session_id: int, db: AsyncSession = Depends(get_db)):
     if not session:
         raise HTTPException(404, "Session not found")
 
-    # Get API key from settings
+    # Get API key from settings or environment variable
+    import os
     api_key_result = await db.execute(
         select(AppSettings).where(AppSettings.key == "youtube_api_key")
     )
     api_key_setting = api_key_result.scalar_one_or_none()
-    api_key = api_key_setting.value if api_key_setting else ""
+    api_key = (api_key_setting.value if api_key_setting and api_key_setting.value.strip() else "") or os.environ.get("YOUTUBE_API_KEY", "")
 
     live_chat_id = session.live_chat_id
     if not live_chat_id and session.stream_id and api_key:
