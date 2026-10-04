@@ -59,7 +59,12 @@ import os
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
-frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
+candidate_paths = [
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")),
+    os.path.abspath(os.path.join(os.getcwd(), "frontend", "dist")),
+    os.path.abspath(os.path.join(os.getcwd(), "..", "frontend", "dist")),
+]
+frontend_dist = next((p for p in candidate_paths if os.path.exists(p)), candidate_paths[0])
 
 if os.path.exists(frontend_dist):
     assets_dir = os.path.join(frontend_dist, "assets")
